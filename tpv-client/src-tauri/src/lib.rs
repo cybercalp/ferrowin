@@ -45,12 +45,6 @@ pub struct ReceiptData {
     pub firma_registro: Option<String>,
 }
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 use crate::signature::{Firmador, FirmaSimulada};
 
 pub fn save_offline_sale_impl(
@@ -396,6 +390,115 @@ fn get_terminal_health(state: State<'_, DbState>) -> Result<db::TerminalHealth, 
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5: Client dossier & entity commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn get_clientes(state: State<'_, DbState>) -> Result<Vec<db::Cliente>, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::get_all_clientes(&conn)
+        .map_err(|e| format!("Failed to get clientes: {}", e))
+}
+
+#[tauri::command]
+fn get_direcciones(entidad_id: String, state: State<'_, DbState>) -> Result<Vec<db::Direccion>, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::get_direcciones_by_entidad(&conn, &entidad_id)
+        .map_err(|e| format!("Failed to get direcciones: {}", e))
+}
+
+#[tauri::command]
+fn get_contactos(entidad_id: String, state: State<'_, DbState>) -> Result<Vec<db::Contacto>, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::get_contactos_by_entidad(&conn, &entidad_id)
+        .map_err(|e| format!("Failed to get contactos: {}", e))
+}
+
+#[tauri::command]
+fn get_notas(entidad_id: String, state: State<'_, DbState>) -> Result<Vec<db::Nota>, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::get_notas_by_entidad(&conn, &entidad_id)
+        .map_err(|e| format!("Failed to get notas: {}", e))
+}
+
+#[tauri::command]
+fn save_direccion(direccion: db::Direccion, state: State<'_, DbState>) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::upsert_direccion(&conn, &direccion)
+        .map_err(|e| format!("Failed to save direccion: {}", e))
+}
+
+#[tauri::command]
+fn save_contacto(contacto: db::Contacto, state: State<'_, DbState>) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::upsert_contacto(&conn, &contacto)
+        .map_err(|e| format!("Failed to save contacto: {}", e))
+}
+
+#[tauri::command]
+fn save_nota(nota: db::Nota, state: State<'_, DbState>) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::upsert_nota(&conn, &nota)
+        .map_err(|e| format!("Failed to save nota: {}", e))
+}
+
+#[tauri::command]
+fn get_cliente_dossier(client_id: String, state: State<'_, DbState>) -> Result<db::ClientDossier, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::get_cliente_dossier(&conn, &client_id)
+        .map_err(|e| format!("Failed to get cliente dossier: {}", e))
+}
+
+#[tauri::command]
+fn registrar_cobro(
+    id: String,
+    cliente_id: String,
+    factura_id: Option<String>,
+    importe: f64,
+    metodo_pago: String,
+    tipo_cobro: String,
+    state: State<'_, DbState>,
+) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    let created_at = chrono::Utc::now().to_rfc3339();
+    db::insert_cobro(&conn, &id, &cliente_id, factura_id.as_deref(), importe, &metodo_pago, &tipo_cobro, &created_at)
+        .map_err(|e| format!("Failed to registrar cobro: {}", e))
+}
+
+#[tauri::command]
+fn get_families(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::get_distinct_families(&conn)
+        .map_err(|e| format!("Failed to get families: {}", e))
+}
+
+#[tauri::command]
+fn get_products_by_family(familia: Option<String>, state: State<'_, DbState>) -> Result<Vec<db::POSProduct>, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::get_products_by_family(&conn, familia.as_deref())
+        .map_err(|e| format!("Failed to get products by family: {}", e))
+}
+
+#[tauri::command]
+fn search_clients(query: String, state: State<'_, DbState>) -> Result<Vec<db::CustomerInfo>, String> {
+    let conn = rusqlite::Connection::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    db::search_clientes(&conn, &query)
+        .map_err(|e| format!("Failed to search clients: {}", e))
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4 (backport): PDF receipt generation
 // ---------------------------------------------------------------------------
 
@@ -564,7 +667,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
             save_offline_sale,
             save_offline_closure,
             get_stock,
@@ -581,6 +683,18 @@ pub fn run() {
             registrar_cobro_pago,
             get_terminal_health,
             generate_receipt_pdf,
+            get_clientes,
+            get_direcciones,
+            get_contactos,
+            get_notas,
+            save_direccion,
+            save_contacto,
+            save_nota,
+            get_cliente_dossier,
+            registrar_cobro,
+            get_families,
+            get_products_by_family,
+            search_clients,
             auth::login,
             auth::set_auth_state,
             auth::clear_auth,

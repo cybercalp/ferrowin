@@ -124,6 +124,90 @@ pub struct TerminalHealth {
     pub app_version: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cliente {
+    pub id: String,
+    pub nombre: String,
+    pub nif: Option<String>,
+    pub email: Option<String>,
+    pub updated_at: Option<String>,
+    pub activo: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Direccion {
+    pub id: String,
+    pub entidad_id: String,
+    pub tipo_direccion: String,
+    pub calle: String,
+    pub ciudad: String,
+    pub provincia: String,
+    pub codigo_postal: String,
+    pub pais: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contacto {
+    pub id: String,
+    pub entidad_id: String,
+    pub nombre: String,
+    pub puesto: Option<String>,
+    pub email: Option<String>,
+    pub telefono: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Nota {
+    pub id: String,
+    pub entidad_id: String,
+    pub nota: String,
+    pub creado_en: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomerInfo {
+    pub id: String,
+    pub nombre: String,
+    pub nif: Option<String>,
+    pub direccion: Option<String>,
+    pub descuento: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentSaleDossier {
+    pub id_factura: String,
+    pub cliente_id: String,
+    pub fecha: String,
+    pub numero: String,
+    pub total: f64,
+    pub estado: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingInvoiceDossier {
+    pub id_factura: String,
+    pub cliente_id: String,
+    pub numero_factura: String,
+    pub importe_pendiente: f64,
+    pub fecha_emision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientStatsDossier {
+    pub cliente_id: String,
+    pub saldo_pendiente: f64,
+    pub limite_credito: f64,
+    pub articulos_mas_comprados_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientDossier {
+    pub cliente: Cliente,
+    pub estadisticas: Option<ClientStatsDossier>,
+    pub ventas_recientes: Vec<RecentSaleDossier>,
+    pub facturas_pendientes: Vec<PendingInvoiceDossier>,
+}
+
 // ---------------------------------------------------------------------------
 // Connection & Schema
 // ---------------------------------------------------------------------------
@@ -235,6 +319,43 @@ pub fn init_db(path: &str) -> Result<Connection> {
             roles TEXT DEFAULT 'CLIENTE'
         );
 
+        CREATE TABLE IF NOT EXISTS direcciones (
+            id TEXT PRIMARY KEY,
+            entidad_id TEXT NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+            tipo_direccion TEXT NOT NULL DEFAULT 'FISCAL',
+            calle TEXT NOT NULL,
+            ciudad TEXT NOT NULL,
+            provincia TEXT NOT NULL,
+            codigo_postal TEXT NOT NULL,
+            pais TEXT NOT NULL DEFAULT 'España'
+        );
+
+        CREATE TABLE IF NOT EXISTS contactos (
+            id TEXT PRIMARY KEY,
+            entidad_id TEXT NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+            nombre TEXT NOT NULL,
+            puesto TEXT,
+            email TEXT,
+            telefono TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS notas (
+            id TEXT PRIMARY KEY,
+            entidad_id TEXT NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+            nota TEXT NOT NULL,
+            creado_en TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS cobros (
+            id TEXT PRIMARY KEY,
+            cliente_id TEXT NOT NULL,
+            factura_id TEXT,
+            importe REAL NOT NULL,
+            metodo_pago TEXT NOT NULL,
+            tipo_cobro TEXT NOT NULL DEFAULT 'DEUDA',
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS sincronizacion_metadatos (
             clave TEXT PRIMARY KEY,
             valor TEXT
@@ -246,6 +367,9 @@ pub fn init_db(path: &str) -> Result<Connection> {
     let _ = conn.execute("ALTER TABLE offline_sales ADD COLUMN firma_registro TEXT;", []);
     let _ = conn.execute("ALTER TABLE offline_sales ADD COLUMN hash_anterior TEXT;", []);
     let _ = conn.execute("ALTER TABLE offline_sales ADD COLUMN datos_encadenamiento TEXT;", []);
+
+    // Client dossier tables (safe if already exist via CREATE TABLE IF NOT EXISTS above)
+    // No ALTER TABLE needed — these are new tables created in the batch above.
 
     // Phase 1 — TPV Tienda POS: extend existing tables
     let _ = conn.execute("ALTER TABLE offline_sales ADD COLUMN subtotal REAL NOT NULL DEFAULT 0;", []);
@@ -934,6 +1058,283 @@ pub fn get_db_size(conn: &Connection) -> Result<i64> {
         |row| row.get(0),
     )?;
     Ok(size)
+}
+
+// ---------------------------------------------------------------------------
+// Client Dossier CRUD
+// ---------------------------------------------------------------------------
+
+pub fn get_all_clientes(conn: &Connection) -> Result<Vec<Cliente>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, nif, email, updated_at, activo FROM clientes WHERE activo = 1 ORDER BY nombre",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(Cliente {
+            id: row.get(0)?,
+            nombre: row.get(1)?,
+            nif: row.get(2)?,
+            email: row.get(3)?,
+            updated_at: row.get(4)?,
+            activo: row.get::<_, i32>(5)? != 0,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn search_clientes(conn: &Connection, query: &str) -> Result<Vec<CustomerInfo>> {
+    let pattern = format!("%{}%", query);
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.nombre, c.nif,
+                (SELECT d.calle || ', ' || d.ciudad FROM direcciones d WHERE d.entidad_id = c.id LIMIT 1) as direccion
+         FROM clientes c
+         WHERE c.activo = 1
+           AND (c.nombre LIKE ?1 OR c.nif LIKE ?1 OR c.id LIKE ?1)
+         ORDER BY c.nombre
+         LIMIT 20",
+    )?;
+    let rows = stmt.query_map(params![pattern], |row| {
+        Ok(CustomerInfo {
+            id: row.get(0)?,
+            nombre: row.get(1)?,
+            nif: row.get(2)?,
+            direccion: row.get(3)?,
+            descuento: 0.0,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn get_direcciones_by_entidad(conn: &Connection, entidad_id: &str) -> Result<Vec<Direccion>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, entidad_id, tipo_direccion, calle, ciudad, provincia, codigo_postal, pais
+         FROM direcciones WHERE entidad_id = ?1",
+    )?;
+    let rows = stmt.query_map(params![entidad_id], |row| {
+        Ok(Direccion {
+            id: row.get(0)?,
+            entidad_id: row.get(1)?,
+            tipo_direccion: row.get(2)?,
+            calle: row.get(3)?,
+            ciudad: row.get(4)?,
+            provincia: row.get(5)?,
+            codigo_postal: row.get(6)?,
+            pais: row.get(7)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn upsert_direccion(conn: &Connection, dir: &Direccion) -> Result<()> {
+    conn.execute(
+        "INSERT INTO direcciones (id, entidad_id, tipo_direccion, calle, ciudad, provincia, codigo_postal, pais)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET
+             tipo_direccion = excluded.tipo_direccion,
+             calle = excluded.calle,
+             ciudad = excluded.ciudad,
+             provincia = excluded.provincia,
+             codigo_postal = excluded.codigo_postal,
+             pais = excluded.pais",
+        params![
+            dir.id, dir.entidad_id, dir.tipo_direccion, dir.calle,
+            dir.ciudad, dir.provincia, dir.codigo_postal, dir.pais,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_contactos_by_entidad(conn: &Connection, entidad_id: &str) -> Result<Vec<Contacto>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, entidad_id, nombre, puesto, email, telefono
+         FROM contactos WHERE entidad_id = ?1",
+    )?;
+    let rows = stmt.query_map(params![entidad_id], |row| {
+        Ok(Contacto {
+            id: row.get(0)?,
+            entidad_id: row.get(1)?,
+            nombre: row.get(2)?,
+            puesto: row.get(3)?,
+            email: row.get(4)?,
+            telefono: row.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn upsert_contacto(conn: &Connection, contacto: &Contacto) -> Result<()> {
+    conn.execute(
+        "INSERT INTO contactos (id, entidad_id, nombre, puesto, email, telefono)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET
+             nombre = excluded.nombre,
+             puesto = excluded.puesto,
+             email = excluded.email,
+             telefono = excluded.telefono",
+        params![
+            contacto.id, contacto.entidad_id, contacto.nombre,
+            contacto.puesto, contacto.email, contacto.telefono,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_notas_by_entidad(conn: &Connection, entidad_id: &str) -> Result<Vec<Nota>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, entidad_id, nota, creado_en FROM notas WHERE entidad_id = ?1 ORDER BY creado_en DESC",
+    )?;
+    let rows = stmt.query_map(params![entidad_id], |row| {
+        Ok(Nota {
+            id: row.get(0)?,
+            entidad_id: row.get(1)?,
+            nota: row.get(2)?,
+            creado_en: row.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn upsert_nota(conn: &Connection, nota: &Nota) -> Result<()> {
+    conn.execute(
+        "INSERT INTO notas (id, entidad_id, nota, creado_en)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET
+             nota = excluded.nota,
+             creado_en = excluded.creado_en",
+        params![nota.id, nota.entidad_id, nota.nota, nota.creado_en],
+    )?;
+    Ok(())
+}
+
+pub fn get_cliente_by_id(conn: &Connection, id: &str) -> Result<Option<Cliente>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, nif, email, updated_at, activo FROM clientes WHERE id = ?1",
+    )?;
+    let mut rows = stmt.query_map(params![id], |row| {
+        Ok(Cliente {
+            id: row.get(0)?,
+            nombre: row.get(1)?,
+            nif: row.get(2)?,
+            email: row.get(3)?,
+            updated_at: row.get(4)?,
+            activo: row.get::<_, i32>(5)? != 0,
+        })
+    })?;
+    match rows.next() {
+        Some(r) => Ok(Some(r?)),
+        None => Ok(None),
+    }
+}
+
+pub fn get_cliente_dossier(conn: &Connection, cliente_id: &str) -> Result<ClientDossier> {
+    let cliente = get_cliente_by_id(conn, cliente_id)?
+        .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows)?;
+
+    // Recent sales for this customer
+    let mut stmt = conn.prepare(
+        "SELECT id, customer_id, created_at, invoice_number, total, status
+         FROM offline_sales
+         WHERE customer_id = ?1
+         ORDER BY created_at DESC
+         LIMIT 10",
+    )?;
+    let ventas_recientes: Vec<RecentSaleDossier> = stmt
+        .query_map(params![cliente_id], |row| {
+            Ok(RecentSaleDossier {
+                id_factura: row.get(0)?,
+                cliente_id: row.get(1)?,
+                fecha: row.get(2)?,
+                numero: row.get(3)?,
+                total: row.get(4)?,
+                estado: row.get(5)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Pending invoices: completed sales with no cobro recorded
+    let mut stmt = conn.prepare(
+        "SELECT os.id, os.customer_id, os.invoice_number, os.total, os.created_at
+         FROM offline_sales os
+         WHERE os.customer_id = ?1 AND os.status = 'COMPLETED'
+         ORDER BY os.created_at DESC
+         LIMIT 20",
+    )?;
+    let facturas_pendientes: Vec<PendingInvoiceDossier> = stmt
+        .query_map(params![cliente_id], |row| {
+            let total: f64 = row.get(4)?;
+            Ok(PendingInvoiceDossier {
+                id_factura: row.get(0)?,
+                cliente_id: row.get(1)?,
+                numero_factura: row.get(2)?,
+                importe_pendiente: total,
+                fecha_emision: row.get(3)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(ClientDossier {
+        cliente,
+        estadisticas: None,
+        ventas_recientes,
+        facturas_pendientes,
+    })
+}
+
+pub fn get_distinct_families(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT nombre FROM familias WHERE activo = 1 ORDER BY nombre",
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    rows.collect()
+}
+
+pub fn get_products_by_family(conn: &Connection, familia: Option<&str>) -> Result<Vec<POSProduct>> {
+    let sql = r#"
+        SELECT p.id, p.codigo, p.nombre, p.precio_venta,
+               sc.stock, f.nombre, ti.nombre, ti.porcentaje, p.imagen_url
+        FROM productos p
+        LEFT JOIN stock_cache sc ON sc.item_id = p.id
+        LEFT JOIN familias f ON f.id = p.familia_id
+        LEFT JOIN tipos_iva ti ON ti.id = p.tipo_iva_id
+        WHERE p.activo = 1
+          AND (?1 IS NULL OR f.nombre = ?1)
+        ORDER BY p.nombre
+        LIMIT 100
+    "#;
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![familia], |row| {
+        Ok(POSProduct {
+            id: row.get(0)?,
+            codigo: row.get(1)?,
+            nombre: row.get(2)?,
+            precio_venta: row.get(3)?,
+            stock: row.get(4)?,
+            familia_nombre: row.get(5)?,
+            tipo_iva_nombre: row.get(6)?,
+            tipo_iva_porcentaje: row.get(7)?,
+            imagen_url: row.get(8)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn insert_cobro(
+    conn: &Connection,
+    id: &str,
+    cliente_id: &str,
+    factura_id: Option<&str>,
+    importe: f64,
+    metodo_pago: &str,
+    tipo_cobro: &str,
+    created_at: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO cobros (id, cliente_id, factura_id, importe, metodo_pago, tipo_cobro, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, cliente_id, factura_id, importe, metodo_pago, tipo_cobro, created_at],
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

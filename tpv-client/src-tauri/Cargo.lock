@@ -1002,6 +1002,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrowin-tpv"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "printpdf",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3804,25 +3823,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows",
-]
-
-[[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "printpdf",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tokio",
- "uuid",
 ]
 
 [[package]]
