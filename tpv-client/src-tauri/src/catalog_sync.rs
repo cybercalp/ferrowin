@@ -1,22 +1,32 @@
 use crate::db;
 use rusqlite::Connection;
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct EliminadosResponse {
-    pub productos: Vec<String>,
-    pub familias: Vec<String>,
-    pub tipos_iva: Vec<String>,
+    #[serde(default)]
+    pub productos: Option<Vec<String>>,
+    #[serde(default)]
+    pub familias: Option<Vec<String>>,
+    #[serde(default)]
+    pub tipos_iva: Option<Vec<String>>,
     /// Kept for forward-compat with the Go backend response.
     /// Client data is NOT saved locally — it was removed in Phase 2.
-    pub clientes: Vec<String>,
+    #[serde(default)]
+    pub clientes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct CatalogSyncResponse {
-    pub tipos_iva: Vec<db::TipoIVA>,
-    pub familias: Vec<db::Familia>,
-    pub productos: Vec<db::Producto>,
-    pub eliminados: EliminadosResponse,
+    #[serde(default)]
+    pub tipos_iva: Option<Vec<db::TipoIVA>>,
+    #[serde(default)]
+    pub familias: Option<Vec<db::Familia>>,
+    #[serde(default)]
+    pub productos: Option<Vec<db::Producto>>,
+    #[serde(default)]
+    pub clientes: Option<Vec<db::Cliente>>,
+    #[serde(default)]
+    pub eliminados: Option<EliminadosResponse>,
 }
 
 /// Fetches the catalog delta since the last sync timestamp and updates the SQLite DB in a transaction.
@@ -59,40 +69,43 @@ pub async fn sync_catalog_delta(db_path: &str, backend_url: &str, token: Option<
         return Err(format!("Server returned error status: {}", resp.status()));
     }
 
-    let sync_data: CatalogSyncResponse = resp.json().await
+    let body_text = resp.text().await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    let sync_data: CatalogSyncResponse = serde_json::from_str(&body_text)
         .map_err(|e| format!("Failed to parse catalog sync response: {}", e))?;
 
     let tx = conn.transaction()
         .map_err(|e| format!("Failed to begin transaction: {}", e))?;
 
     // Upsert catalog items
-    for item in &sync_data.tipos_iva {
+    for item in sync_data.tipos_iva.iter().flatten() {
         db::upsert_tipo_iva(&tx, item)
             .map_err(|e| format!("Failed to upsert tipo_iva: {}", e))?;
     }
 
-    for item in &sync_data.familias {
+    for item in sync_data.familias.iter().flatten() {
         db::upsert_familia(&tx, item)
             .map_err(|e| format!("Failed to upsert familia: {}", e))?;
     }
 
-    for item in &sync_data.productos {
+    for item in sync_data.productos.iter().flatten() {
         db::upsert_producto(&tx, item)
             .map_err(|e| format!("Failed to upsert producto: {}", e))?;
     }
 
     // Process deactivated/deleted items
-    for id in &sync_data.eliminados.tipos_iva {
+    for id in sync_data.eliminados.iter().flat_map(|e| e.tipos_iva.iter()).flatten() {
         db::deactivate_tipo_iva(&tx, id)
             .map_err(|e| format!("Failed to deactivate tipo_iva: {}", e))?;
     }
 
-    for id in &sync_data.eliminados.familias {
+    for id in sync_data.eliminados.iter().flat_map(|e| e.familias.iter()).flatten() {
         db::deactivate_familia(&tx, id)
             .map_err(|e| format!("Failed to deactivate familia: {}", e))?;
     }
 
-    for id in &sync_data.eliminados.productos {
+    for id in sync_data.eliminados.iter().flat_map(|e| e.productos.iter()).flatten() {
         db::deactivate_producto(&tx, id)
             .map_err(|e| format!("Failed to deactivate producto: {}", e))?;
     }
