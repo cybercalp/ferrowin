@@ -238,9 +238,15 @@ type PresupuestoLineaRequest struct {
 }
 
 type ConvertPresupuestoRequest struct {
-	PresupuestoID           string `json:"presupuesto_id"`
-	UserID            string `json:"user_id"`
-	RecalculatePrices bool   `json:"recalculate_prices"`
+	PresupuestoID     string                   `json:"presupuesto_id"`
+	UserID            string                   `json:"user_id"`
+	RecalculatePrices bool                     `json:"recalculate_prices"`
+	Lineas            []ConversionLineaRequest `json:"lineas,omitempty"`
+}
+
+type ConversionLineaRequest struct {
+	ProductoID string  `json:"producto_id"`
+	Cantidad   float64 `json:"cantidad"`
 }
 
 type CreatePedidoRequest struct {
@@ -255,8 +261,9 @@ type PedidoLineaRequest struct {
 }
 
 type ConvertPedidoRequest struct {
-	PedidoID     string `json:"pedido_id"`
-	AlmacenID string `json:"almacen_id"`
+	PedidoID  string                   `json:"pedido_id"`
+	AlmacenID string                   `json:"almacen_id"`
+	Lineas    []ConversionLineaRequest `json:"lineas,omitempty"`
 }
 
 type ProcessDNRequest struct {
@@ -264,9 +271,10 @@ type ProcessDNRequest struct {
 }
 
 type ConvertDNRequest struct {
-	AlbaranID    string `json:"albaran_id"`
-	TerminalID        string `json:"terminal_id"`
-	SerieFacturacionID string `json:"serie_facturacion_id"`
+	AlbaranID          string                   `json:"albaran_id"`
+	TerminalID         string                   `json:"terminal_id"`
+	SerieFacturacionID string                   `json:"serie_facturacion_id"`
+	Lineas             []ConversionLineaRequest `json:"lineas,omitempty"`
 }
 
 func getTenantID(r *http.Request) (uuid.UUID, error) {
@@ -364,9 +372,28 @@ func (c *SalesController) HandleConvertPresupuestoToPedido(w http.ResponseWriter
 		return
 	}
 
-	order, err := c.service.ConvertPresupuestoToPedido(r.Context(), empID, quoteUUID, userUUID, domain.ConvertPresupuestoOptions{
+	var lineas []domain.ConversionLineInput
+	for _, l := range req.Lineas {
+		prodUUID, err := uuid.Parse(l.ProductoID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid producto_id in lineas"})
+			return
+		}
+		lineas = append(lineas, domain.ConversionLineInput{
+			ProductoID: prodUUID,
+			Cantidad:   l.Cantidad,
+		})
+	}
+
+	input := domain.ConvertPresupuestoInput{
+		PresupuestoID:     quoteUUID,
+		UserID:            userUUID,
 		RecalculatePrices: req.RecalculatePrices,
-	})
+		Lineas:            lineas,
+	}
+
+	order, err := c.service.ConvertPresupuestoToPedido(r.Context(), empID, input)
 	if err != nil {
 		if errors.Is(err, domain.ErrTenantMismatch) {
 			w.WriteHeader(http.StatusForbidden)
@@ -463,7 +490,27 @@ func (c *SalesController) HandleConvertPedidoToAlbaran(w http.ResponseWriter, r 
 		return
 	}
 
-	dn, err := c.service.ConvertPedidoToAlbaran(r.Context(), empID, orderUUID, whUUID)
+	var lineas []domain.ConversionLineInput
+	for _, l := range req.Lineas {
+		prodUUID, err := uuid.Parse(l.ProductoID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid producto_id in lineas"})
+			return
+		}
+		lineas = append(lineas, domain.ConversionLineInput{
+			ProductoID: prodUUID,
+			Cantidad:   l.Cantidad,
+		})
+	}
+
+	input := domain.ConvertPedidoInput{
+		PedidoID:  orderUUID,
+		AlmacenID: whUUID,
+		Lineas:    lineas,
+	}
+
+	dn, err := c.service.ConvertPedidoToAlbaran(r.Context(), empID, input)
 	if err != nil {
 		if errors.Is(err, domain.ErrTenantMismatch) {
 			w.WriteHeader(http.StatusForbidden)
@@ -553,7 +600,28 @@ func (c *SalesController) HandleConvertAlbaranToFactura(w http.ResponseWriter, r
 		return
 	}
 
-	invoice, err := c.service.ConvertAlbaranToFactura(r.Context(), empID, dnUUID, termUUID, seriesUUID)
+	var lineas []domain.ConversionLineInput
+	for _, l := range req.Lineas {
+		prodUUID, err := uuid.Parse(l.ProductoID)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "invalid producto_id in lineas"})
+			return
+		}
+		lineas = append(lineas, domain.ConversionLineInput{
+			ProductoID: prodUUID,
+			Cantidad:   l.Cantidad,
+		})
+	}
+
+	input := domain.ConvertAlbaranInput{
+		AlbaranID:          dnUUID,
+		TerminalID:         termUUID,
+		SerieFacturacionID: seriesUUID,
+		Lineas:             lineas,
+	}
+
+	invoice, err := c.service.ConvertAlbaranToFactura(r.Context(), empID, input)
 	if err != nil {
 		if errors.Is(err, domain.ErrTenantMismatch) {
 			w.WriteHeader(http.StatusForbidden)

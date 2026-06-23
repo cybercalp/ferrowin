@@ -105,6 +105,35 @@ type ConvertPresupuestoOptions struct {
 	RecalculatePrices bool
 }
 
+// ConversionLineInput specifies a single line for partial conversion.
+type ConversionLineInput struct {
+	ProductoID uuid.UUID
+	Cantidad   float64
+}
+
+// ConvertPedidoInput holds parameters for pedido-to-albaran conversion.
+type ConvertPedidoInput struct {
+	PedidoID  uuid.UUID
+	AlmacenID uuid.UUID
+	Lineas    []ConversionLineInput // nil/empty = convert all remaining
+}
+
+// ConvertPresupuestoInput holds parameters for presupuesto-to-pedido conversion.
+type ConvertPresupuestoInput struct {
+	PresupuestoID     uuid.UUID
+	UserID            uuid.UUID
+	RecalculatePrices bool
+	Lineas            []ConversionLineInput // nil/empty = convert all remaining
+}
+
+// ConvertAlbaranInput holds parameters for albaran-to-factura conversion.
+type ConvertAlbaranInput struct {
+	AlbaranID          uuid.UUID
+	TerminalID         uuid.UUID
+	SerieFacturacionID uuid.UUID
+	Lineas             []ConversionLineInput // nil/empty = convert all remaining
+}
+
 // SalesService handles sales document flows, validation, and transitions.
 type SalesService struct {
 	repo            SalesRepository
@@ -191,7 +220,7 @@ func (s *SalesService) UpdatePedido(ctx context.Context, input UpdatePedidoInput
 	if err != nil {
 		return err
 	}
-	if doc.Estado == StatusConverted || doc.Estado == StatusCancelled {
+	if doc.Estado == StatusConverted || doc.Estado == StatusCancelled || doc.Estado == StatusParcial {
 		return fmt.Errorf("%w: cannot update a %s document", ErrInvalidStatus, doc.Estado)
 	}
 	return s.repo.UpdatePedido(ctx, input)
@@ -376,9 +405,10 @@ func (s *SalesService) CreatePedido(ctx context.Context, empresaID uuid.UUID, qu
 	return o, nil
 }
 
-// ConvertPresupuestoToPedido transitions an Approved or Draft Presupuesto to an Pedido.
-func (s *SalesService) ConvertPresupuestoToPedido(ctx context.Context, empresaID, quoteID, userID uuid.UUID, opt ConvertPresupuestoOptions) (*Pedido, error) {
-	quote, err := s.repo.GetPresupuesto(ctx, quoteID)
+// ConvertPresupuestoToPedido transitions an Approved or Draft Presupuesto to a Pedido.
+// Supports partial conversion: only specified lines (or all remaining if Lineas is nil).
+func (s *SalesService) ConvertPresupuestoToPedido(ctx context.Context, empresaID uuid.UUID, input ConvertPresupuestoInput) (*Pedido, error) {
+	quote, err := s.repo.GetPresupuesto(ctx, input.PresupuestoID)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +432,7 @@ func (s *SalesService) ConvertPresupuestoToPedido(ctx context.Context, empresaID
 		if s.securityService == nil {
 			return nil, ErrSecurityServiceNil
 		}
-		authorized, err := s.securityService.HasPermission(ctx, userID, "convert-expired-quote")
+		authorized, err := s.securityService.HasPermission(ctx, input.UserID, "convert-expired-quote")
 		if err != nil {
 			return nil, err
 		}
@@ -411,41 +441,118 @@ func (s *SalesService) ConvertPresupuestoToPedido(ctx context.Context, empresaID
 		}
 	}
 
-	total := quote.Total
-	if isExpired && opt.RecalculatePrices {
-		total = quote.Total * 1.10
-	}
-
-	quote.Estado = StatusConverted
-	if err := s.repo.SavePresupuesto(ctx, quote); err != nil {
-		return nil, err
-	}
-
-	// Create Pedido
-	oID := uuid.New()
-	orderLines := make([]PedidoLinea, len(quote.Lineas))
-	for i, l := range quote.Lineas {
-		price := l.PrecioUnitario
-		if isExpired && opt.RecalculatePrices {
-			price = l.PrecioUnitario * 1.10
+	// Build conversion lines
+	var convLines []ConversionLineInput
+	if len(input.Lineas) == 0 {
+		// Convert all remaining
+		for _, l := range quote.Lineas {
+			remaining := l.Cantidad - l.Convertido
+			if remaining > 0 {
+				convLines = append(convLines, ConversionLineInput{
+					ProductoID: l.ProductoID,
+					Cantidad:   remaining,
+				})
+			}
 		}
+	} else {
+		// Validate specified lines
+		for _, cl := range input.Lineas {
+			if cl.Cantidad <= 0 {
+				return nil, fmt.Errorf("conversion quantity must be positive for product %s", cl.ProductoID)
+			}
+			found := false
+			for _, l := range quote.Lineas {
+				if l.ProductoID == cl.ProductoID {
+					found = true
+					remaining := l.Cantidad - l.Convertido
+					if cl.Cantidad > remaining {
+						return nil, fmt.Errorf("requested quantity %f exceeds remaining %f for product %s", cl.Cantidad, remaining, cl.ProductoID)
+					}
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("product %s not found on quote", cl.ProductoID)
+			}
+			convLines = append(convLines, cl)
+		}
+	}
+
+	if len(convLines) == 0 {
+		return nil, fmt.Errorf("no lines to convert: all quantities already converted")
+	}
+
+	// Build pedido lines and calculate total
+	oID := uuid.New()
+	var total float64
+	orderLines := make([]PedidoLinea, len(convLines))
+	for i, cl := range convLines {
+		// Find the quote line for pricing
+		var price float64
+		for _, l := range quote.Lineas {
+			if l.ProductoID == cl.ProductoID {
+				price = l.PrecioUnitario
+				if isExpired && input.RecalculatePrices {
+					price = l.PrecioUnitario * 1.10
+				}
+				break
+			}
+		}
+		total += cl.Cantidad * price
 		orderLines[i] = PedidoLinea{
 			ID:             uuid.New(),
-			PedidoID:        oID,
-			ProductoID:     l.ProductoID,
-			Cantidad:       l.Cantidad,
+			PedidoID:       oID,
+			ProductoID:     cl.ProductoID,
+			Cantidad:       cl.Cantidad,
 			PrecioUnitario: price,
 		}
 	}
 
+	// Update quote line Convertido values
+	for _, cl := range convLines {
+		for i, l := range quote.Lineas {
+			if l.ProductoID == cl.ProductoID {
+				quote.Lineas[i].Convertido += cl.Cantidad
+				break
+			}
+		}
+	}
+
+	// Determine new quote status
+	allConverted := true
+	for _, l := range quote.Lineas {
+		if l.Convertido < l.Cantidad {
+			allConverted = false
+			break
+		}
+	}
+	if allConverted {
+		quote.Estado = StatusConverted
+	} else {
+		quote.Estado = StatusParcial
+	}
+
+	if isExpired && input.RecalculatePrices {
+		// Recalculate quote total based on remaining
+		var newTotal float64
+		for _, l := range quote.Lineas {
+			newTotal += l.Cantidad * l.PrecioUnitario * 1.10
+		}
+		quote.Total = newTotal
+	}
+
+	if err := s.repo.SavePresupuesto(ctx, quote); err != nil {
+		return nil, err
+	}
+
 	order := &Pedido{
-		ID:        oID,
-		EmpresaID: empresaID,
-		PresupuestoID:   &quote.ID,
-		Total:     total,
-		Estado:    StatusDraft,
-		CreatedAt: s.now(),
-		Lineas:    orderLines,
+		ID:            oID,
+		EmpresaID:     empresaID,
+		PresupuestoID: &quote.ID,
+		Total:         total,
+		Estado:        StatusDraft,
+		CreatedAt:     s.now(),
+		Lineas:        orderLines,
 	}
 
 	if err := s.repo.SavePedido(ctx, order); err != nil {
@@ -455,9 +562,10 @@ func (s *SalesService) ConvertPresupuestoToPedido(ctx context.Context, empresaID
 	return order, nil
 }
 
-// ConvertPedidoToAlbaran transitions an Pedido to a Albaran in Draft status.
-func (s *SalesService) ConvertPedidoToAlbaran(ctx context.Context, empresaID, orderID, almacenID uuid.UUID) (*Albaran, error) {
-	order, err := s.repo.GetPedido(ctx, orderID)
+// ConvertPedidoToAlbaran transitions a Pedido to an Albaran in Draft status.
+// Supports partial conversion: only specified lines (or all remaining if Lineas is nil).
+func (s *SalesService) ConvertPedidoToAlbaran(ctx context.Context, empresaID uuid.UUID, input ConvertPedidoInput) (*Albaran, error) {
+	order, err := s.repo.GetPedido(ctx, input.PedidoID)
 	if err != nil {
 		return nil, err
 	}
@@ -472,32 +580,106 @@ func (s *SalesService) ConvertPedidoToAlbaran(ctx context.Context, empresaID, or
 		return nil, ErrDocumentAlreadyCancelled
 	}
 
-	order.Estado = StatusConverted
+	// Build conversion lines
+	var convLines []ConversionLineInput
+	if len(input.Lineas) == 0 {
+		// Convert all remaining
+		for _, l := range order.Lineas {
+			remaining := l.Cantidad - l.Entregado
+			if remaining > 0 {
+				convLines = append(convLines, ConversionLineInput{
+					ProductoID: l.ProductoID,
+					Cantidad:   remaining,
+				})
+			}
+		}
+	} else {
+		// Validate specified lines
+		for _, cl := range input.Lineas {
+			if cl.Cantidad <= 0 {
+				return nil, fmt.Errorf("conversion quantity must be positive for product %s", cl.ProductoID)
+			}
+			found := false
+			for _, l := range order.Lineas {
+				if l.ProductoID == cl.ProductoID {
+					found = true
+					remaining := l.Cantidad - l.Entregado
+					if cl.Cantidad > remaining {
+						return nil, fmt.Errorf("requested quantity %f exceeds remaining %f for product %s", cl.Cantidad, remaining, cl.ProductoID)
+					}
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("product %s not found on order", cl.ProductoID)
+			}
+			convLines = append(convLines, cl)
+		}
+	}
+
+	if len(convLines) == 0 {
+		return nil, fmt.Errorf("no lines to convert: all quantities already delivered")
+	}
+
+	// Build albarán lines and calculate total
+	dnID := uuid.New()
+	var total float64
+	dnLines := make([]AlbaranLinea, len(convLines))
+	for i, cl := range convLines {
+		var price float64
+		for _, l := range order.Lineas {
+			if l.ProductoID == cl.ProductoID {
+				price = l.PrecioUnitario
+				break
+			}
+		}
+		total += cl.Cantidad * price
+		dnLines[i] = AlbaranLinea{
+			ID:             uuid.New(),
+			AlbaranID:      dnID,
+			ProductoID:     cl.ProductoID,
+			Cantidad:       cl.Cantidad,
+			PrecioUnitario: price,
+		}
+	}
+
+	// Update pedido line Entregado values
+	for _, cl := range convLines {
+		for i, l := range order.Lineas {
+			if l.ProductoID == cl.ProductoID {
+				order.Lineas[i].Entregado += cl.Cantidad
+				break
+			}
+		}
+	}
+
+	// Determine new pedido status
+	allDelivered := true
+	for _, l := range order.Lineas {
+		if l.Entregado < l.Cantidad {
+			allDelivered = false
+			break
+		}
+	}
+	if allDelivered {
+		order.Estado = StatusConverted
+	} else {
+		order.Estado = StatusParcial
+	}
+
 	if err := s.repo.SavePedido(ctx, order); err != nil {
 		return nil, err
 	}
 
-	dnID := uuid.New()
-	dnLines := make([]AlbaranLinea, len(order.Lineas))
-	for i, l := range order.Lineas {
-		dnLines[i] = AlbaranLinea{
-			ID:             uuid.New(),
-			AlbaranID: dnID,
-			ProductoID:     l.ProductoID,
-			Cantidad:       l.Cantidad,
-			PrecioUnitario: l.PrecioUnitario,
-		}
-	}
-
 	dn := &Albaran{
-		ID:          dnID,
-		EmpresaID:   empresaID,
-		PedidoID:     &order.ID,
-		Total:       order.Total,
-		Estado:      StatusDraft,
-		AlmacenID: almacenID,
-		CreatedAt:   s.now(),
-		Lineas:      dnLines,
+		ID:        dnID,
+		EmpresaID: empresaID,
+		PedidoID:  &order.ID,
+		Total:     total,
+		Estado:    StatusDraft,
+		AlmacenID: input.AlmacenID,
+		CreatedAt: s.now(),
+		Lineas:    dnLines,
 	}
 
 	if err := s.repo.SaveAlbaran(ctx, dn); err != nil {
@@ -538,9 +720,10 @@ func (s *SalesService) ProcessAlbaran(ctx context.Context, empresaID, dnID uuid.
 	return s.repo.SaveAlbaran(ctx, dn)
 }
 
-// ConvertAlbaranToFactura transitions a Albaran to an Factura.
-func (s *SalesService) ConvertAlbaranToFactura(ctx context.Context, empresaID, dnID, terminalID, serieFacturacionID uuid.UUID) (*Factura, error) {
-	dn, err := s.repo.GetAlbaran(ctx, dnID)
+// ConvertAlbaranToFactura transitions an Albaran to a Factura.
+// Supports partial conversion: only specified lines (or all remaining if Lineas is nil).
+func (s *SalesService) ConvertAlbaranToFactura(ctx context.Context, empresaID uuid.UUID, input ConvertAlbaranInput) (*Factura, error) {
+	dn, err := s.repo.GetAlbaran(ctx, input.AlbaranID)
 	if err != nil {
 		return nil, err
 	}
@@ -564,41 +747,115 @@ func (s *SalesService) ConvertAlbaranToFactura(ctx context.Context, empresaID, d
 		return nil, ErrBillingServiceNil
 	}
 
-	invoiceNumber, seq, err := s.billingService.GenerateFacturaNumber(ctx, terminalID)
+	// Build conversion lines
+	var convLines []ConversionLineInput
+	if len(input.Lineas) == 0 {
+		// Convert all remaining
+		for _, l := range dn.Lineas {
+			remaining := l.Cantidad - l.Facturado
+			if remaining > 0 {
+				convLines = append(convLines, ConversionLineInput{
+					ProductoID: l.ProductoID,
+					Cantidad:   remaining,
+				})
+			}
+		}
+	} else {
+		// Validate specified lines
+		for _, cl := range input.Lineas {
+			if cl.Cantidad <= 0 {
+				return nil, fmt.Errorf("conversion quantity must be positive for product %s", cl.ProductoID)
+			}
+			found := false
+			for _, l := range dn.Lineas {
+				if l.ProductoID == cl.ProductoID {
+					found = true
+					remaining := l.Cantidad - l.Facturado
+					if cl.Cantidad > remaining {
+						return nil, fmt.Errorf("requested quantity %f exceeds remaining %f for product %s", cl.Cantidad, remaining, cl.ProductoID)
+					}
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("product %s not found on delivery note", cl.ProductoID)
+			}
+			convLines = append(convLines, cl)
+		}
+	}
+
+	if len(convLines) == 0 {
+		return nil, fmt.Errorf("no lines to convert: all quantities already invoiced")
+	}
+
+	invoiceNumber, seq, err := s.billingService.GenerateFacturaNumber(ctx, input.TerminalID)
 	if err != nil {
 		return nil, err
 	}
 
-	dn.Estado = StatusConverted
+	// Build invoice lines and calculate total
+	invID := uuid.New()
+	var total float64
+	invLines := make([]FacturaLinea, len(convLines))
+	for i, cl := range convLines {
+		var price float64
+		for _, l := range dn.Lineas {
+			if l.ProductoID == cl.ProductoID {
+				price = l.PrecioUnitario
+				break
+			}
+		}
+		total += cl.Cantidad * price
+		invLines[i] = FacturaLinea{
+			ID:             uuid.New(),
+			FacturaID:      invID,
+			ProductoID:     cl.ProductoID,
+			Cantidad:       cl.Cantidad,
+			PrecioUnitario: price,
+		}
+	}
+
+	// Update albarán line Facturado values
+	for _, cl := range convLines {
+		for i, l := range dn.Lineas {
+			if l.ProductoID == cl.ProductoID {
+				dn.Lineas[i].Facturado += cl.Cantidad
+				break
+			}
+		}
+	}
+
+	// Determine new albarán status
+	allInvoiced := true
+	for _, l := range dn.Lineas {
+		if l.Facturado < l.Cantidad {
+			allInvoiced = false
+			break
+		}
+	}
+	if allInvoiced {
+		dn.Estado = StatusConverted
+	} else {
+		dn.Estado = StatusParcial
+	}
+
 	if err := s.repo.SaveAlbaran(ctx, dn); err != nil {
 		return nil, err
 	}
 
-	invID := uuid.New()
-	invLines := make([]FacturaLinea, len(dn.Lineas))
-	for i, l := range dn.Lineas {
-		invLines[i] = FacturaLinea{
-			ID:             uuid.New(),
-			FacturaID:      invID,
-			ProductoID:     l.ProductoID,
-			Cantidad:       l.Cantidad,
-			PrecioUnitario: l.PrecioUnitario,
-		}
-	}
-
 	invoice := &Factura{
-		ID:                invID,
-		EmpresaID:         empresaID,
-		AlbaranID:    &dn.ID,
-		TerminalID:        terminalID,
-		SerieFacturacionID: serieFacturacionID,
-		NumeroFactura:     invoiceNumber,
+		ID:                 invID,
+		EmpresaID:          empresaID,
+		AlbaranID:          &dn.ID,
+		TerminalID:         input.TerminalID,
+		SerieFacturacionID: input.SerieFacturacionID,
+		NumeroFactura:      invoiceNumber,
 		NumeroSecuencia:    seq,
-		Total:             dn.Total,
-		RectifiedTotal:    0,
-		Estado:            StatusIssued,
-		CreatedAt:         s.now(),
-		Lineas:            invLines,
+		Total:              total,
+		RectifiedTotal:     0,
+		Estado:             StatusIssued,
+		CreatedAt:          s.now(),
+		Lineas:             invLines,
 	}
 
 	if err := s.repo.SaveFactura(ctx, invoice); err != nil {

@@ -179,6 +179,14 @@ func TestConvertPresupuestoToPedido(t *testing.T) {
 			Estado:    StatusApproved,
 			FechaValidez: fixedTime.Add(1 * time.Hour), // Not expired
 			CreatedAt: fixedTime.Add(-1 * time.Hour),
+			Lineas: []PresupuestoLinea{
+				{
+					ID:         uuid.New(),
+					ProductoID: uuid.New(),
+					Cantidad:   5.0,
+					PrecioUnitario: 20.0,
+				},
+			},
 		}
 
 		repo := &mockSalesRepository{
@@ -197,7 +205,11 @@ func TestConvertPresupuestoToPedido(t *testing.T) {
 		service := NewSalesService(repo, nil, sec, nil)
 		service.Now = func() time.Time { return fixedTime }
 
-		order, err := service.ConvertPresupuestoToPedido(ctx, empresaID, quote.ID, userID, ConvertPresupuestoOptions{RecalculatePrices: false})
+		input := ConvertPresupuestoInput{
+			PresupuestoID: quote.ID,
+			UserID:        userID,
+		}
+		order, err := service.ConvertPresupuestoToPedido(ctx, empresaID, input)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -227,6 +239,14 @@ func TestConvertPresupuestoToPedido(t *testing.T) {
 			Total:     100.0,
 			Estado:    StatusApproved,
 			FechaValidez: fixedTime.Add(-1 * time.Hour), // Expired
+			Lineas: []PresupuestoLinea{
+				{
+					ID:         uuid.New(),
+					ProductoID: uuid.New(),
+					Cantidad:   5.0,
+					PrecioUnitario: 20.0,
+				},
+			},
 		}
 
 		repo := &mockSalesRepository{
@@ -244,7 +264,11 @@ func TestConvertPresupuestoToPedido(t *testing.T) {
 		service := NewSalesService(repo, nil, sec, nil)
 		service.Now = func() time.Time { return fixedTime }
 
-		_, err := service.ConvertPresupuestoToPedido(ctx, empresaID, quote.ID, userID, ConvertPresupuestoOptions{RecalculatePrices: false})
+		input := ConvertPresupuestoInput{
+			PresupuestoID: quote.ID,
+			UserID:        userID,
+		}
+		_, err := service.ConvertPresupuestoToPedido(ctx, empresaID, input)
 		if !errors.Is(err, ErrUnauthorized) {
 			t.Fatalf("expected ErrUnauthorized, got %v", err)
 		}
@@ -263,6 +287,14 @@ func TestConvertPedidoToAlbaran(t *testing.T) {
 			EmpresaID: empresaID,
 			Total:     150.0,
 			Estado:    StatusApproved,
+			Lineas: []PedidoLinea{
+				{
+					ID:         uuid.New(),
+					ProductoID: uuid.New(),
+					Cantidad:   10.0,
+					PrecioUnitario: 15.0,
+				},
+			},
 		}
 
 		repo := &mockSalesRepository{
@@ -274,7 +306,11 @@ func TestConvertPedidoToAlbaran(t *testing.T) {
 		service := NewSalesService(repo, nil, nil, nil)
 		service.Now = func() time.Time { return fixedTime }
 
-		dn, err := service.ConvertPedidoToAlbaran(ctx, empresaID, order.ID, whID)
+		input := ConvertPedidoInput{
+			PedidoID:  order.ID,
+			AlmacenID: whID,
+		}
+		dn, err := service.ConvertPedidoToAlbaran(ctx, empresaID, input)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -289,6 +325,56 @@ func TestConvertPedidoToAlbaran(t *testing.T) {
 
 		if order.Estado != StatusConverted {
 			t.Errorf("expected order status Converted, got %s", order.Estado)
+		}
+	})
+
+	t.Run("Partial conversion", func(t *testing.T) {
+		prodID := uuid.New()
+		order := &Pedido{
+			ID:        uuid.New(),
+			EmpresaID: empresaID,
+			Total:     100.0,
+			Estado:    StatusDraft,
+			Lineas: []PedidoLinea{
+				{
+					ID:             uuid.New(),
+					ProductoID:     prodID,
+					Cantidad:       10.0,
+					PrecioUnitario: 10.0,
+					Entregado:      0,
+				},
+			},
+		}
+
+		repo := &mockSalesRepository{
+			getPedidoFunc: func(ctx context.Context, id uuid.UUID) (*Pedido, error) {
+				return order, nil
+			},
+		}
+
+		service := NewSalesService(repo, nil, nil, nil)
+		service.Now = func() time.Time { return fixedTime }
+
+		// Convert 3 of 10
+		input := ConvertPedidoInput{
+			PedidoID:  order.ID,
+			AlmacenID: whID,
+			Lineas: []ConversionLineInput{
+				{ProductoID: prodID, Cantidad: 3.0},
+			},
+		}
+		dn, err := service.ConvertPedidoToAlbaran(ctx, empresaID, input)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if dn.Total != 30.0 {
+			t.Errorf("expected albaran total 30.0, got %f", dn.Total)
+		}
+		if order.Estado != StatusParcial {
+			t.Errorf("expected order status Parcial, got %s", order.Estado)
+		}
+		if order.Lineas[0].Entregado != 3.0 {
+			t.Errorf("expected entregado 3.0, got %f", order.Lineas[0].Entregado)
 		}
 	})
 }
@@ -306,6 +392,14 @@ func TestConvertAlbaranToFactura(t *testing.T) {
 			EmpresaID: empresaID,
 			Total:     300.0,
 			Estado:    StatusProcessed,
+			Lineas: []AlbaranLinea{
+				{
+					ID:         uuid.New(),
+					ProductoID: uuid.New(),
+					Cantidad:   10.0,
+					PrecioUnitario: 30.0,
+				},
+			},
 		}
 
 		repo := &mockSalesRepository{
@@ -323,7 +417,12 @@ func TestConvertAlbaranToFactura(t *testing.T) {
 		service := NewSalesService(repo, nil, nil, bill)
 		service.Now = func() time.Time { return fixedTime }
 
-		invoice, err := service.ConvertAlbaranToFactura(ctx, empresaID, dn.ID, terminalID, seriesID)
+		input := ConvertAlbaranInput{
+			AlbaranID:          dn.ID,
+			TerminalID:         terminalID,
+			SerieFacturacionID: seriesID,
+		}
+		invoice, err := service.ConvertAlbaranToFactura(ctx, empresaID, input)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}

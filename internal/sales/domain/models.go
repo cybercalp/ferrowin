@@ -11,6 +11,7 @@ const (
 	StatusDraft     = "Borrador"
 	StatusApproved  = "Aprobado"
 	StatusConverted = "Convertido"
+	StatusParcial   = "Parcial"
 	StatusCancelled = "Anulado"
 	StatusIssued    = "Emitida"
 	StatusProcessed = "Procesado"
@@ -37,6 +38,7 @@ type PresupuestoLinea struct {
 	Cantidad       float64   `json:"cantidad"`
 	PrecioUnitario float64   `json:"precio_unitario"`
 	CosteUnitario  float64   `json:"coste_unitario"`
+	Convertido     float64   `json:"convertido"`
 }
 
 // Pedido represents a sales order.
@@ -57,6 +59,7 @@ type PedidoLinea struct {
 	ProductoID     uuid.UUID `json:"producto_id"`
 	Cantidad       float64   `json:"cantidad"`
 	PrecioUnitario float64   `json:"precio_unitario"`
+	Entregado      float64   `json:"entregado"`
 }
 
 // Albaran represents a delivery note.
@@ -73,11 +76,12 @@ type Albaran struct {
 }
 
 type AlbaranLinea struct {
-	ID         uuid.UUID `json:"id"`
-	AlbaranID  uuid.UUID `json:"albaran_id"`
-	ProductoID uuid.UUID `json:"producto_id"`
-	Cantidad   float64   `json:"cantidad"`
-	PrecioUnitario float64 `json:"precio_unitario"`
+	ID             uuid.UUID `json:"id"`
+	AlbaranID      uuid.UUID `json:"albaran_id"`
+	ProductoID     uuid.UUID `json:"producto_id"`
+	Cantidad       float64   `json:"cantidad"`
+	PrecioUnitario float64   `json:"precio_unitario"`
+	Facturado      float64   `json:"facturado"`
 }
 
 // Factura represents a sales invoice.

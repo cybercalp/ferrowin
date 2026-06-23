@@ -150,14 +150,14 @@ func (r *SQLSalesRepository) SavePresupuesto(ctx context.Context, q *domain.Pres
 	// Insert lines
 	var qLine string
 	if r.isSQLite {
-		qLine = `INSERT INTO presupuesto_lineas (id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario) 
-                 VALUES (?, ?, ?, ?, ?, ?)`
+		qLine = `INSERT INTO presupuesto_lineas (id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario, convertido) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`
 	} else {
-		qLine = `INSERT INTO presupuesto_lineas (id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario) 
-                 VALUES ($1, $2, $3, $4, $5, $6)`
+		qLine = `INSERT INTO presupuesto_lineas (id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario, convertido) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	}
 	for _, l := range q.Lineas {
-		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.PresupuestoID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario, l.CosteUnitario)
+		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.PresupuestoID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario, l.CosteUnitario, l.Convertido)
 		if err != nil {
 			return err
 		}
@@ -189,9 +189,9 @@ func (r *SQLSalesRepository) GetPresupuesto(ctx context.Context, id uuid.UUID) (
 	// Fetch lines
 	var qLines string
 	if r.isSQLite {
-		qLines = `SELECT id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario FROM presupuesto_lineas WHERE presupuesto_id = ?`
+		qLines = `SELECT id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario, convertido FROM presupuesto_lineas WHERE presupuesto_id = ?`
 	} else {
-		qLines = `SELECT id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario FROM presupuesto_lineas WHERE presupuesto_id = $1`
+		qLines = `SELECT id, presupuesto_id, producto_id, cantidad, precio_unitario, coste_unitario, convertido FROM presupuesto_lineas WHERE presupuesto_id = $1`
 	}
 	rows, err := r.db.QueryContext(ctx, qLines, id.String())
 	if err != nil {
@@ -202,8 +202,8 @@ func (r *SQLSalesRepository) GetPresupuesto(ctx context.Context, id uuid.UUID) (
 	var lines []domain.PresupuestoLinea
 	for rows.Next() {
 		var lIDStr, qIDStr, prodIDStr string
-		var qty, price, cost float64
-		if err := rows.Scan(&lIDStr, &qIDStr, &prodIDStr, &qty, &price, &cost); err != nil {
+		var qty, price, cost, convertido float64
+		if err := rows.Scan(&lIDStr, &qIDStr, &prodIDStr, &qty, &price, &cost, &convertido); err != nil {
 			return nil, err
 		}
 		lUUID, _ := uuid.Parse(lIDStr)
@@ -211,11 +211,12 @@ func (r *SQLSalesRepository) GetPresupuesto(ctx context.Context, id uuid.UUID) (
 		prodUUID, _ := uuid.Parse(prodIDStr)
 		lines = append(lines, domain.PresupuestoLinea{
 			ID:             lUUID,
-			PresupuestoID:        qUUID,
+			PresupuestoID:  qUUID,
 			ProductoID:     prodUUID,
 			Cantidad:       qty,
 			PrecioUnitario: price,
 			CosteUnitario:  cost,
+			Convertido:     convertido,
 		})
 	}
 
@@ -380,14 +381,14 @@ func (r *SQLSalesRepository) SavePedido(ctx context.Context, o *domain.Pedido) e
 	// Insert lines
 	var qLine string
 	if r.isSQLite {
-		qLine = `INSERT INTO pedido_lineas (id, pedido_id, producto_id, cantidad, precio_unitario) 
-                 VALUES (?, ?, ?, ?, ?)`
+		qLine = `INSERT INTO pedido_lineas (id, pedido_id, producto_id, cantidad, precio_unitario, entregado) 
+                 VALUES (?, ?, ?, ?, ?, ?)`
 	} else {
-		qLine = `INSERT INTO pedido_lineas (id, pedido_id, producto_id, cantidad, precio_unitario) 
-                 VALUES ($1, $2, $3, $4, $5)`
+		qLine = `INSERT INTO pedido_lineas (id, pedido_id, producto_id, cantidad, precio_unitario, entregado) 
+                 VALUES ($1, $2, $3, $4, $5, $6)`
 	}
 	for _, l := range o.Lineas {
-		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.PedidoID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario)
+		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.PedidoID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario, l.Entregado)
 		if err != nil {
 			return err
 		}
@@ -420,9 +421,9 @@ func (r *SQLSalesRepository) GetPedido(ctx context.Context, id uuid.UUID) (*doma
 	// Fetch lines
 	var qLines string
 	if r.isSQLite {
-		qLines = `SELECT id, pedido_id, producto_id, cantidad, precio_unitario FROM pedido_lineas WHERE pedido_id = ?`
+		qLines = `SELECT id, pedido_id, producto_id, cantidad, precio_unitario, entregado FROM pedido_lineas WHERE pedido_id = ?`
 	} else {
-		qLines = `SELECT id, pedido_id, producto_id, cantidad, precio_unitario FROM pedido_lineas WHERE pedido_id = $1`
+		qLines = `SELECT id, pedido_id, producto_id, cantidad, precio_unitario, entregado FROM pedido_lineas WHERE pedido_id = $1`
 	}
 	rows, err := r.db.QueryContext(ctx, qLines, id.String())
 	if err != nil {
@@ -433,8 +434,8 @@ func (r *SQLSalesRepository) GetPedido(ctx context.Context, id uuid.UUID) (*doma
 	var lines []domain.PedidoLinea
 	for rows.Next() {
 		var lIDStr, oIDStr, prodIDStr string
-		var qty, price float64
-		if err := rows.Scan(&lIDStr, &oIDStr, &prodIDStr, &qty, &price); err != nil {
+		var qty, price, entregado float64
+		if err := rows.Scan(&lIDStr, &oIDStr, &prodIDStr, &qty, &price, &entregado); err != nil {
 			return nil, err
 		}
 		lUUID, _ := uuid.Parse(lIDStr)
@@ -442,10 +443,11 @@ func (r *SQLSalesRepository) GetPedido(ctx context.Context, id uuid.UUID) (*doma
 		prodUUID, _ := uuid.Parse(prodIDStr)
 		lines = append(lines, domain.PedidoLinea{
 			ID:             lUUID,
-			PedidoID:        oUUID,
+			PedidoID:       oUUID,
 			ProductoID:     prodUUID,
 			Cantidad:       qty,
 			PrecioUnitario: price,
+			Entregado:      entregado,
 		})
 	}
 
@@ -615,14 +617,14 @@ func (r *SQLSalesRepository) SaveAlbaran(ctx context.Context, dn *domain.Albaran
 	// Insert lines
 	var qLine string
 	if r.isSQLite {
-		qLine = `INSERT INTO albaran_lineas (id, albaran_id, producto_id, cantidad, precio_unitario) 
-                 VALUES (?, ?, ?, ?, ?)`
+		qLine = `INSERT INTO albaran_lineas (id, albaran_id, producto_id, cantidad, precio_unitario, facturado) 
+                 VALUES (?, ?, ?, ?, ?, ?)`
 	} else {
-		qLine = `INSERT INTO albaran_lineas (id, albaran_id, producto_id, cantidad, precio_unitario) 
-                 VALUES ($1, $2, $3, $4, $5)`
+		qLine = `INSERT INTO albaran_lineas (id, albaran_id, producto_id, cantidad, precio_unitario, facturado) 
+                 VALUES ($1, $2, $3, $4, $5, $6)`
 	}
 	for _, l := range dn.Lineas {
-		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.AlbaranID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario)
+		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.AlbaranID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario, l.Facturado)
 		if err != nil {
 			return err
 		}
@@ -655,9 +657,9 @@ func (r *SQLSalesRepository) GetAlbaran(ctx context.Context, id uuid.UUID) (*dom
 	// Fetch lines
 	var qLines string
 	if r.isSQLite {
-		qLines = `SELECT id, albaran_id, producto_id, cantidad, precio_unitario FROM albaran_lineas WHERE albaran_id = ?`
+		qLines = `SELECT id, albaran_id, producto_id, cantidad, precio_unitario, facturado FROM albaran_lineas WHERE albaran_id = ?`
 	} else {
-		qLines = `SELECT id, albaran_id, producto_id, cantidad, precio_unitario FROM albaran_lineas WHERE albaran_id = $1`
+		qLines = `SELECT id, albaran_id, producto_id, cantidad, precio_unitario, facturado FROM albaran_lineas WHERE albaran_id = $1`
 	}
 	rows, err := r.db.QueryContext(ctx, qLines, id.String())
 	if err != nil {
@@ -668,8 +670,8 @@ func (r *SQLSalesRepository) GetAlbaran(ctx context.Context, id uuid.UUID) (*dom
 	var lines []domain.AlbaranLinea
 	for rows.Next() {
 		var lIDStr, dnIDStr, prodIDStr string
-		var qty, price float64
-		if err := rows.Scan(&lIDStr, &dnIDStr, &prodIDStr, &qty, &price); err != nil {
+		var qty, price, facturado float64
+		if err := rows.Scan(&lIDStr, &dnIDStr, &prodIDStr, &qty, &price, &facturado); err != nil {
 			return nil, err
 		}
 		lUUID, _ := uuid.Parse(lIDStr)
@@ -677,10 +679,11 @@ func (r *SQLSalesRepository) GetAlbaran(ctx context.Context, id uuid.UUID) (*dom
 		prodUUID, _ := uuid.Parse(prodIDStr)
 		lines = append(lines, domain.AlbaranLinea{
 			ID:             lUUID,
-			AlbaranID: dnUUID,
+			AlbaranID:      dnUUID,
 			ProductoID:     prodUUID,
 			Cantidad:       qty,
 			PrecioUnitario: price,
+			Facturado:      facturado,
 		})
 	}
 

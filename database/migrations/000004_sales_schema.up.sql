@@ -12,7 +12,8 @@ CREATE TABLE presupuesto_lineas (
     producto_id UUID NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
     cantidad NUMERIC(12,4) NOT NULL,
     precio_unitario NUMERIC(12,2) NOT NULL,
-    coste_unitario NUMERIC(12,2) NOT NULL DEFAULT 0.00
+    coste_unitario NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+    convertido NUMERIC(12,4) NOT NULL DEFAULT 0
 );
 
 CREATE TABLE pedido_lineas (
@@ -20,7 +21,8 @@ CREATE TABLE pedido_lineas (
     pedido_id UUID NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
     producto_id UUID NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
     cantidad NUMERIC(12,4) NOT NULL,
-    precio_unitario NUMERIC(12,2) NOT NULL
+    precio_unitario NUMERIC(12,2) NOT NULL,
+    entregado NUMERIC(12,4) NOT NULL DEFAULT 0
 );
 
 CREATE TABLE albaran_lineas (
@@ -28,7 +30,8 @@ CREATE TABLE albaran_lineas (
     albaran_id UUID NOT NULL REFERENCES albaranes(id) ON DELETE CASCADE,
     producto_id UUID NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
     cantidad NUMERIC(12,4) NOT NULL,
-    precio_unitario NUMERIC(12,2) NOT NULL
+    precio_unitario NUMERIC(12,2) NOT NULL,
+    facturado NUMERIC(12,4) NOT NULL DEFAULT 0
 );
 
 CREATE TABLE factura_lineas (

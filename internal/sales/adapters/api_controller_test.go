@@ -95,7 +95,7 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
 			cliente_id TEXT NOT NULL REFERENCES entidades(id) ON DELETE RESTRICT,
 			total REAL NOT NULL,
-			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Parcial', 'Convertido', 'Anulado')),
 			fecha_validez DATETIME NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			version INTEGER NOT NULL DEFAULT 1
@@ -106,14 +106,15 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
 			precio_unitario REAL NOT NULL,
-			coste_unitario REAL NOT NULL DEFAULT 0.00
+			coste_unitario REAL NOT NULL DEFAULT 0.00,
+			convertido REAL NOT NULL DEFAULT 0.00
 		)`,
 		`CREATE TABLE pedidos (
 			id TEXT PRIMARY KEY,
 			empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
 			presupuesto_id TEXT REFERENCES presupuestos(id) ON DELETE SET NULL,
 			total REAL NOT NULL,
-			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Parcial', 'Convertido', 'Anulado')),
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			version INTEGER NOT NULL DEFAULT 1
 		)`,
@@ -122,14 +123,15 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			pedido_id TEXT NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
-			precio_unitario REAL NOT NULL
+			precio_unitario REAL NOT NULL,
+			entregado REAL NOT NULL DEFAULT 0.00
 		)`,
 		`CREATE TABLE albaranes (
 			id TEXT PRIMARY KEY,
 			empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
 			pedido_id TEXT REFERENCES pedidos(id) ON DELETE SET NULL,
 			total REAL NOT NULL,
-			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Procesado', 'Convertido', 'Anulado')),
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Parcial', 'Procesado', 'Convertido', 'Anulado')),
 			almacen_id TEXT NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			version INTEGER NOT NULL DEFAULT 1
@@ -139,7 +141,8 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			albaran_id TEXT NOT NULL REFERENCES albaranes(id) ON DELETE CASCADE,
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
-			precio_unitario REAL NOT NULL
+			precio_unitario REAL NOT NULL,
+			facturado REAL NOT NULL DEFAULT 0.00
 		)`,
 		`CREATE TABLE facturas (
 			id TEXT PRIMARY KEY,

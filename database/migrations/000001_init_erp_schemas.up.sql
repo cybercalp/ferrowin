@@ -60,7 +60,7 @@ CREATE TABLE presupuestos (
     empresa_id UUID NOT NULL,
     cliente_id UUID NOT NULL,
     total NUMERIC(12,2) NOT NULL,
-    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
+    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Parcial', 'Convertido', 'Anulado')),
     created_at TIMESTAMP DEFAULT NOW(),
     version INT NOT NULL DEFAULT 1
 );
@@ -70,7 +70,7 @@ CREATE TABLE pedidos (
     empresa_id UUID NOT NULL,
     presupuesto_id UUID REFERENCES presupuestos(id) ON DELETE SET NULL,
     total NUMERIC(12,2) NOT NULL,
-    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
+    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Parcial', 'Convertido', 'Anulado')),
     created_at TIMESTAMP DEFAULT NOW(),
     version INT NOT NULL DEFAULT 1
 );
@@ -81,7 +81,7 @@ CREATE TABLE albaranes (
     pedido_id UUID REFERENCES pedidos(id) ON DELETE SET NULL,
     almacen_id UUID NOT NULL,
     total NUMERIC(12,2) NOT NULL,
-    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Convertido', 'Anulado')),
+    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Parcial', 'Procesado', 'Convertido', 'Anulado')),
     created_at TIMESTAMP DEFAULT NOW(),
     version INT NOT NULL DEFAULT 1
 );
