@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useNavigate } from "react-router";
 import { usePOS } from "./PosContext";
 import { useAuth } from "../context/AuthContext";
 import { BarcodeInput } from "./BarcodeInput";
@@ -33,6 +34,7 @@ function loadRpw(): number {
 export function POSMainLayout() {
   const { state, dispatch } = usePOS();
   const { logout, user } = useAuth();
+  const navigate = useNavigate();
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(loadRpw);
 
   // Save to localStorage only when the user finishes dragging
@@ -161,6 +163,14 @@ export function POSMainLayout() {
           >
             <span className="header-btn-icon header-icon-closure" />
             <span className="header-btn-label">Corte</span>
+          </button>
+          <button
+            className="pos-header-btn"
+            onClick={() => navigate("/entities")}
+            title="Gestión de entidades"
+          >
+            <span className="header-btn-icon header-icon-entities" />
+            <span className="header-btn-label">Clientes</span>
           </button>
           <button
             className="pos-header-btn"

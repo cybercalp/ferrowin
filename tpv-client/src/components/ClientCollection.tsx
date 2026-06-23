@@ -1,44 +1,60 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { PendingInvoiceDossier } from "./ClientDossierView";
+import { useParams, useNavigate } from "react-router";
+import type { PendingInvoiceDossier } from "./ClientDossierView";
 
-interface ClientCollectionProps {
-  clientId: string;
-  clientName: string;
-  initialInvoice: PendingInvoiceDossier | null; // Selected invoice to pay, if any
-  pendingInvoices: PendingInvoiceDossier[];      // List of all pending invoices for dropdown
-  onClose: () => void;
-  onSuccess: () => void;
-  onLog: (msg: string) => void;
+interface ClienteInfo {
+  id: string;
+  nombre: string;
+  nif?: string;
 }
 
-export function ClientCollection({
-  clientId,
-  clientName,
-  initialInvoice,
-  pendingInvoices,
-  onClose,
-  onSuccess,
-  onLog,
-}: ClientCollectionProps) {
+export function ClientCollection() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [cliente, setCliente] = useState<ClienteInfo | null>(null);
+  const [pendingInvoices, setPendingInvoices] = useState<PendingInvoiceDossier[]>([]);
+  const [loading, setLoading] = useState(true);
   const [tipoCobro, setTipoCobro] = useState<"DEUDA" | "A_CUENTA">("DEUDA");
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>("");
   const [importe, setImporte] = useState<number>(0);
   const [metodoPago, setMetodoPago] = useState<string>("Efectivo");
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
   useEffect(() => {
-    if (initialInvoice) {
-      setTipoCobro("DEUDA");
-      setSelectedInvoiceId(initialInvoice.id_factura);
-      setImporte(initialInvoice.importe_pendiente);
-    } else {
-      setTipoCobro("A_CUENTA");
-      setSelectedInvoiceId("");
-      setImporte(0);
+    if (id) fetchData(id);
+  }, [id]);
+
+  async function fetchData(clientId: string) {
+    setLoading(true);
+    try {
+      // Fetch client info
+      const clienteData: ClienteInfo = await invoke("get_entidad_by_id", { id: clientId });
+      setCliente(clienteData);
+
+      // Fetch pending invoices
+      try {
+        const dossier = await invoke<any>("get_cliente_dossier", { clientId });
+        setPendingInvoices(dossier.facturas_pendientes || []);
+        if (dossier.facturas_pendientes?.length > 0) {
+          setTipoCobro("DEUDA");
+          setSelectedInvoiceId(dossier.facturas_pendientes[0].id_factura);
+          setImporte(dossier.facturas_pendientes[0].importe_pendiente);
+        } else {
+          setTipoCobro("A_CUENTA");
+        }
+      } catch {
+        // If dossier fails, default to A_CUENTA
+        setTipoCobro("A_CUENTA");
+      }
+    } catch (err: any) {
+      setErrorMsg(`Error al cargar datos: ${err}`);
+    } finally {
+      setLoading(false);
     }
-  }, [initialInvoice]);
+  }
 
   // Handle invoice change in dropdown
   const handleInvoiceChange = (invoiceId: string) => {
@@ -64,6 +80,7 @@ export function ClientCollection({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!id || !cliente) return;
     if (importe <= 0) {
       setErrorMsg("El importe debe ser mayor a 0 €.");
       return;
@@ -74,106 +91,119 @@ export function ClientCollection({
       return;
     }
 
-    setLoading(true);
+    setSubmitting(true);
     setErrorMsg("");
+    setSuccessMsg("");
     const uuid = crypto.randomUUID();
 
     try {
-      onLog(`Registrando cobro de ${importe} € para cliente ${clientName}. Tipo: ${tipoCobro}`);
       await invoke("registrar_cobro", {
         id: uuid,
-        clienteId: clientId,
+        clienteId: id,
         facturaId: tipoCobro === "DEUDA" ? selectedInvoiceId : null,
         importe: Number(importe),
         metodoPago,
         tipoCobro,
       });
 
-      onLog(`Cobro registrado correctamente de forma local. ID: ${uuid}`);
-      onSuccess();
+      setSuccessMsg(`Cobro de ${importe.toFixed(2)} € registrado correctamente.`);
+      // Reset form
+      setImporte(0);
+      setSelectedInvoiceId("");
+      // Refresh invoices
+      setTimeout(() => fetchData(id), 1000);
     } catch (err: any) {
       setErrorMsg(`Error al registrar cobro: ${err}`);
-      onLog(`Error al registrar cobro: ${err}`);
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
+  if (loading) {
+    return <div style={loadingStyle}>🔄 Cargando datos del cliente...</div>;
+  }
+
+  if (!cliente) {
+    return (
+      <div style={containerStyle}>
+        <div style={errorStyle}>{errorMsg || "Cliente no encontrado"}</div>
+        <button onClick={() => navigate("/entities")} style={backBtnStyle}>
+          ← Entidades
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div style={overlayStyle}>
-      <style>{`
-        @keyframes scaleIn {
-          from { transform: scale(0.95); opacity: 0; }
-          to { transform: scale(1); opacity: 1; }
-        }
-      `}</style>
+    <div style={containerStyle}>
+      {/* Navigation */}
+      <div style={navBarStyle}>
+        <button onClick={() => navigate(`/entities/${id}`)} style={backBtnStyle}>
+          ← Volver a entidad
+        </button>
+        <button onClick={() => navigate(`/clients/${id}/dossier`)} style={dossierBtnStyle}>
+          📋 Ver Dossier
+        </button>
+      </div>
+
       <div style={modalStyle}>
         <div style={modalHeaderStyle}>
           <h3 style={{ margin: 0, fontSize: "18px", fontWeight: "700" }}>💳 Registrar Cobro In Situ</h3>
-          <button onClick={onClose} style={btnCloseXStyle}>✕</button>
         </div>
 
         <form onSubmit={handleSubmit} style={formStyle}>
           <div style={clientLabelRowStyle}>
             <span style={clientLabelTitleStyle}>Cliente:</span>
-            <span style={clientLabelValueStyle}>{clientName}</span>
+            <span style={clientLabelValueStyle}>{cliente.nombre}</span>
           </div>
 
           {/* Tipo de Cobro Toggle */}
-          {!initialInvoice && (
-            <div style={formGroupStyle}>
-              <label style={labelStyle}>Tipo de Cobro</label>
-              <div style={toggleButtonGroupStyle}>
-                <button
-                  type="button"
-                  onClick={() => handleTipoCobroChange("DEUDA")}
-                  style={{
-                    ...toggleButtonStyle,
-                    backgroundColor: tipoCobro === "DEUDA" ? "var(--accent-default)" : "var(--bg-page)",
-                    color: tipoCobro === "DEUDA" ? "#fff" : "var(--text-secondary)",
-                  }}
-                  disabled={pendingInvoices.length === 0}
-                >
-                  Cobro de Deuda (Factura)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleTipoCobroChange("A_CUENTA")}
-                  style={{
-                    ...toggleButtonStyle,
-                    backgroundColor: tipoCobro === "A_CUENTA" ? "var(--accent-default)" : "var(--bg-page)",
-                    color: tipoCobro === "A_CUENTA" ? "#fff" : "var(--text-secondary)",
-                  }}
-                >
-                  Entrega a Cuenta
-                </button>
-              </div>
+          <div style={formGroupStyle}>
+            <label style={labelStyle}>Tipo de Cobro</label>
+            <div style={toggleButtonGroupStyle}>
+              <button
+                type="button"
+                onClick={() => handleTipoCobroChange("DEUDA")}
+                style={{
+                  ...toggleButtonStyle,
+                  backgroundColor: tipoCobro === "DEUDA" ? "var(--accent-default)" : "var(--bg-page)",
+                  color: tipoCobro === "DEUDA" ? "#fff" : "var(--text-secondary)",
+                }}
+                disabled={pendingInvoices.length === 0}
+              >
+                Cobro de Deuda (Factura)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTipoCobroChange("A_CUENTA")}
+                style={{
+                  ...toggleButtonStyle,
+                  backgroundColor: tipoCobro === "A_CUENTA" ? "var(--accent-default)" : "var(--bg-page)",
+                  color: tipoCobro === "A_CUENTA" ? "#fff" : "var(--text-secondary)",
+                }}
+              >
+                Entrega a Cuenta
+              </button>
             </div>
-          )}
+          </div>
 
           {/* Factura Selection */}
           {tipoCobro === "DEUDA" && (
             <div style={formGroupStyle}>
               <label style={labelStyle}>Factura Pendiente</label>
-              {initialInvoice ? (
-                <div style={lockedInvoiceStyle}>
-                  📄 {initialInvoice.numero_factura} (Pendiente: {initialInvoice.importe_pendiente.toFixed(2)} €)
-                </div>
-              ) : (
-                <select
-                  value={selectedInvoiceId}
-                  onChange={(e) => handleInvoiceChange(e.target.value)}
-                  style={selectStyle}
-                  required
-                >
-                  <option value="">-- Seleccione una factura --</option>
-                  {pendingInvoices.map((inv) => (
-                    <option key={inv.id_factura} value={inv.id_factura}>
-                      {inv.numero_factura} (Pendiente: {inv.importe_pendiente.toFixed(2)} €)
-                    </option>
-                  ))}
-                </select>
-              )}
+              <select
+                value={selectedInvoiceId}
+                onChange={(e) => handleInvoiceChange(e.target.value)}
+                style={selectStyle}
+                required
+              >
+                <option value="">-- Seleccione una factura --</option>
+                {pendingInvoices.map((inv) => (
+                  <option key={inv.id_factura} value={inv.id_factura}>
+                    {inv.numero_factura} (Pendiente: {inv.importe_pendiente.toFixed(2)} €)
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
@@ -209,14 +239,15 @@ export function ClientCollection({
           </div>
 
           {errorMsg && <div style={errorBoxStyle}>{errorMsg}</div>}
+          {successMsg && <div style={successBoxStyle}>{successMsg}</div>}
 
           {/* Actions */}
           <div style={actionsRowStyle}>
-            <button type="button" onClick={onClose} style={btnCancelStyle} disabled={loading}>
+            <button type="button" onClick={() => navigate(`/entities/${id}`)} style={btnCancelStyle} disabled={submitting}>
               Cancelar
             </button>
-            <button type="submit" style={btnSubmitStyle} disabled={loading}>
-              {loading ? "Registrando..." : "Confirmar Pago"}
+            <button type="submit" style={btnSubmitStyle} disabled={submitting}>
+              {submitting ? "Registrando..." : "Confirmar Pago"}
             </button>
           </div>
         </form>
@@ -228,28 +259,64 @@ export function ClientCollection({
 // ---------------------------------------------------------------------------
 // Premium styling matching Ferrowin aesthetics
 // ---------------------------------------------------------------------------
-const overlayStyle: React.CSSProperties = {
-  position: "fixed",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  backgroundColor: "var(--overlay)",
-  backdropFilter: "blur(4px)",
+const containerStyle: React.CSSProperties = {
+  maxWidth: "600px",
+  margin: "20px auto",
+  padding: "0 20px",
+  fontFamily: "'Inter', system-ui, sans-serif",
+};
+
+const navBarStyle: React.CSSProperties = {
   display: "flex",
+  justifyContent: "space-between",
   alignItems: "center",
-  justifyContent: "center",
-  zIndex: 1000,
+  marginBottom: "16px",
+};
+
+const backBtnStyle: React.CSSProperties = {
+  backgroundColor: "var(--bg-page)",
+  color: "var(--text-secondary)",
+  border: "1px solid var(--border-input)",
+  borderRadius: "8px",
+  padding: "8px 14px",
+  fontSize: "13px",
+  fontWeight: "600",
+  cursor: "pointer",
+};
+
+const dossierBtnStyle: React.CSSProperties = {
+  backgroundColor: "var(--bg-page)",
+  color: "var(--accent-default)",
+  border: "1px solid var(--border-input)",
+  borderRadius: "8px",
+  padding: "8px 14px",
+  fontSize: "13px",
+  fontWeight: "600",
+  cursor: "pointer",
+};
+
+const loadingStyle: React.CSSProperties = {
+  textAlign: "center",
+  padding: "40px",
+  color: "var(--text-muted)",
+  fontWeight: "500",
+};
+
+const errorStyle: React.CSSProperties = {
+  backgroundColor: "var(--status-error-bg)",
+  color: "var(--status-error-text)",
+  border: "1px solid var(--status-error-bg)",
+  borderRadius: "12px",
+  padding: "16px",
+  marginBottom: "16px",
+  textAlign: "center",
 };
 
 const modalStyle: React.CSSProperties = {
   backgroundColor: "var(--bg-card)",
   borderRadius: "16px",
-  width: "100%",
-  maxWidth: "460px",
   boxShadow: "var(--shadow-lg)",
   border: "1px solid var(--border-default)",
-  animation: "scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
   overflow: "hidden",
 };
 
@@ -259,14 +326,6 @@ const modalHeaderStyle: React.CSSProperties = {
   alignItems: "center",
   padding: "16px 20px",
   borderBottom: "1px solid var(--border-default)",
-};
-
-const btnCloseXStyle: React.CSSProperties = {
-  border: "none",
-  background: "none",
-  fontSize: "16px",
-  cursor: "pointer",
-  color: "var(--text-placeholder)",
 };
 
 const formStyle: React.CSSProperties = {
@@ -334,16 +393,6 @@ const selectStyle: React.CSSProperties = {
   backgroundColor: "var(--bg-card)",
 };
 
-const lockedInvoiceStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: "10px",
-  backgroundColor: "var(--bg-page)",
-  border: "1px solid var(--border-default)",
-  color: "var(--text-secondary)",
-  fontSize: "13px",
-  fontWeight: "600",
-};
-
 const inputStyle: React.CSSProperties = {
   padding: "10px 12px",
   borderRadius: "10px",
@@ -356,6 +405,16 @@ const errorBoxStyle: React.CSSProperties = {
   backgroundColor: "var(--status-error-bg)",
   color: "var(--status-error-text)",
   border: "1px solid var(--status-error-bg)",
+  borderRadius: "8px",
+  padding: "10px 14px",
+  fontSize: "13px",
+  marginBottom: "16px",
+};
+
+const successBoxStyle: React.CSSProperties = {
+  backgroundColor: "var(--status-success-bg)",
+  color: "var(--status-success-text)",
+  border: "1px solid var(--status-success-bg)",
   borderRadius: "8px",
   padding: "10px 14px",
   fontSize: "13px",

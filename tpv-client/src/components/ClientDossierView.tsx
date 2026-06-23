@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Cliente } from "./RouteSetup";
+import { useParams, useNavigate } from "react-router";
 
 export interface RecentSaleDossier {
   id_factura: string;
@@ -27,60 +27,35 @@ export interface PendingInvoiceDossier {
 }
 
 export interface ClientDossier {
-  cliente: Cliente;
+  cliente: { id: string; nombre: string; nif?: string; email?: string };
   estadisticas?: ClientStatsDossier | null;
   ventas_recientes: RecentSaleDossier[];
   facturas_pendientes: PendingInvoiceDossier[];
 }
 
-interface ClientDossierViewProps {
-  clientId: string;
-  onCollectPayment: (invoice?: PendingInvoiceDossier | null) => void;
-  onShareReceipt: (sale: RecentSaleDossier) => void;
-  onLog: (msg: string) => void;
-  refreshTrigger?: number; // to allow parent to force refetching dossier
-}
-
-export function ClientDossierView({ clientId, onCollectPayment, onShareReceipt, onLog, refreshTrigger }: ClientDossierViewProps) {
+export function ClientDossierView() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [dossier, setDossier] = useState<ClientDossier | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    fetchDossier();
-  }, [clientId, refreshTrigger]);
+    if (id) fetchDossier(id);
+  }, [id]);
 
-  async function fetchDossier() {
+  async function fetchDossier(clientId: string) {
     setLoading(true);
     setErrorMsg("");
     try {
       const data: ClientDossier = await invoke("get_cliente_dossier", { clientId });
       setDossier(data);
-      onLog(`Expediente cargado para el cliente: ${data.cliente.nombre}`);
     } catch (err: any) {
       setErrorMsg(`Error al cargar expediente: ${err}`);
-      onLog(`Error al cargar expediente de ${clientId}: ${err}`);
     } finally {
       setLoading(false);
     }
   }
-
-  if (loading) {
-    return <div style={loadingStyle}>🔄 Cargando expediente de cliente...</div>;
-  }
-
-  if (errorMsg) {
-    return <div style={errorStyle}>{errorMsg}</div>;
-  }
-
-  if (!dossier) {
-    return <div style={emptyStyle}>Seleccione un cliente para ver su ficha.</div>;
-  }
-
-  const { cliente, estadisticas, ventas_recientes, facturas_pendientes } = dossier;
-  const limiteCredito = estadisticas?.limite_credito ?? 0;
-  const saldoPendiente = estadisticas?.saldo_pendiente ?? 0;
-  const creditoDisponible = Math.max(0, limiteCredito - saldoPendiente);
 
   // Format date helper
   const formatDate = (isoString: string) => {
@@ -92,8 +67,45 @@ export function ClientDossierView({ clientId, onCollectPayment, onShareReceipt, 
     }
   };
 
+  if (loading) {
+    return <div style={loadingStyle}>🔄 Cargando expediente de cliente...</div>;
+  }
+
+  if (errorMsg) {
+    return (
+      <div style={containerStyle}>
+        <div style={errorStyle}>{errorMsg}</div>
+        <button onClick={() => navigate(`/entities/${id}`)} style={backBtnStyle}>
+          ← Volver a entidad
+        </button>
+      </div>
+    );
+  }
+
+  if (!dossier) {
+    return <div style={emptyStyle}>Seleccione un cliente para ver su ficha.</div>;
+  }
+
+  const { cliente, estadisticas, ventas_recientes, facturas_pendientes } = dossier;
+  const limiteCredito = estadisticas?.limite_credito ?? 0;
+  const saldoPendiente = estadisticas?.saldo_pendiente ?? 0;
+  const creditoDisponible = Math.max(0, limiteCredito - saldoPendiente);
+
   return (
     <div style={containerStyle}>
+      {/* Back button */}
+      <div style={navBarStyle}>
+        <button onClick={() => navigate(`/entities/${id}`)} style={backBtnStyle}>
+          ← Volver a entidad
+        </button>
+        <button
+          onClick={() => navigate(`/clients/${id}/collection`)}
+          style={collectBtnStyle}
+        >
+          💳 Registrar Cobro
+        </button>
+      </div>
+
       {/* Header card */}
       <div style={headerCardStyle}>
         <div style={avatarStyle}>👤</div>
@@ -126,15 +138,7 @@ export function ClientDossierView({ clientId, onCollectPayment, onShareReceipt, 
       <div style={detailsGridStyle}>
         {/* Unpaid Invoices */}
         <div style={sectionBlockStyle}>
-          <div style={sectionHeaderRowStyle}>
-            <h4 style={sectionTitleStyle}>💸 Facturas Pendientes (Impagas)</h4>
-            <button
-              onClick={() => onCollectPayment(null)}
-              style={btnCollectOnAccountStyle}
-            >
-              ➕ Entrega a Cuenta
-            </button>
-          </div>
+          <h4 style={sectionTitleStyle}>💸 Facturas Pendientes (Impagas)</h4>
           <div style={listContainerStyle}>
             {facturas_pendientes.length === 0 ? (
               <div style={emptyListStyle}>No hay facturas pendientes de cobro.</div>
@@ -147,12 +151,6 @@ export function ClientDossierView({ clientId, onCollectPayment, onShareReceipt, 
                   </div>
                   <div style={itemActionStyle}>
                     <span style={itemAmountStyle}>{f.importe_pendiente.toFixed(2)} €</span>
-                    <button
-                      onClick={() => onCollectPayment(f)}
-                      style={btnCollectStyle}
-                    >
-                      Cobrar
-                    </button>
                   </div>
                 </div>
               ))
@@ -184,12 +182,6 @@ export function ClientDossierView({ clientId, onCollectPayment, onShareReceipt, 
                   </div>
                   <div style={itemActionStyle}>
                     <span style={{ ...itemAmountStyle, color: "var(--text-primary)" }}>{v.total.toFixed(2)} €</span>
-                    <button
-                      onClick={() => onShareReceipt(v)}
-                      style={btnShareStyle}
-                    >
-                      Compartir
-                    </button>
                   </div>
                 </div>
               ))
@@ -216,6 +208,35 @@ const containerStyle: React.CSSProperties = {
   textAlign: "left",
 };
 
+const navBarStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: "16px",
+};
+
+const backBtnStyle: React.CSSProperties = {
+  backgroundColor: "var(--bg-page)",
+  color: "var(--text-secondary)",
+  border: "1px solid var(--border-input)",
+  borderRadius: "8px",
+  padding: "8px 14px",
+  fontSize: "13px",
+  fontWeight: "600",
+  cursor: "pointer",
+};
+
+const collectBtnStyle: React.CSSProperties = {
+  backgroundColor: "var(--accent-default)",
+  color: "#fff",
+  border: "none",
+  borderRadius: "8px",
+  padding: "8px 14px",
+  fontSize: "13px",
+  fontWeight: "600",
+  cursor: "pointer",
+};
+
 const loadingStyle: React.CSSProperties = {
   textAlign: "center",
   padding: "40px",
@@ -229,8 +250,7 @@ const errorStyle: React.CSSProperties = {
   border: "1px solid var(--status-error-bg)",
   borderRadius: "12px",
   padding: "16px",
-  margin: "20px auto",
-  maxWidth: "800px",
+  marginBottom: "16px",
   textAlign: "center",
 };
 
@@ -325,29 +345,11 @@ const sectionBlockStyle: React.CSSProperties = {
   padding: "18px",
 };
 
-const sectionHeaderRowStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: "14px",
-};
-
 const sectionTitleStyle: React.CSSProperties = {
   fontSize: "15px",
   fontWeight: "700",
   color: "var(--text-primary)",
-  margin: 0,
-};
-
-const btnCollectOnAccountStyle: React.CSSProperties = {
-  backgroundColor: "var(--bg-page)",
-  color: "var(--accent-default)",
-  border: "1px solid var(--border-input)",
-  borderRadius: "8px",
-  padding: "6px 12px",
-  fontSize: "12px",
-  fontWeight: "600",
-  cursor: "pointer",
+  margin: "0 0 14px",
 };
 
 const listContainerStyle: React.CSSProperties = {
@@ -411,26 +413,4 @@ const itemAmountStyle: React.CSSProperties = {
   fontWeight: "700",
   fontSize: "14px",
   color: "var(--color-danger)",
-};
-
-const btnCollectStyle: React.CSSProperties = {
-  backgroundColor: "var(--color-danger)",
-  color: "white",
-  border: "none",
-  borderRadius: "6px",
-  padding: "6px 12px",
-  fontSize: "12px",
-  fontWeight: "600",
-  cursor: "pointer",
-};
-
-const btnShareStyle: React.CSSProperties = {
-  backgroundColor: "var(--accent-default)",
-  color: "white",
-  border: "none",
-  borderRadius: "6px",
-  padding: "6px 12px",
-  fontSize: "12px",
-  fontWeight: "600",
-  cursor: "pointer",
 };

@@ -1,22 +1,18 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { EntityDetailPanel } from "./EntityDetailPanel";
+import { useNavigate } from "react-router";
 import type { Entidad } from "./EntityDetailPanel";
 
 export type { Entidad };
 
 type RoleFilter = "all" | "cliente" | "proveedor" | "ambos";
 
-interface EntityManagerProps {
-  onLog: (msg: string) => void;
-}
-
-export function EntityManager({ onLog }: EntityManagerProps) {
+export function EntityManager() {
+  const navigate = useNavigate();
   const [entidades, setEntidades] = useState<Entidad[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
-  const [selectedEntity, setSelectedEntity] = useState<Entidad | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -28,9 +24,8 @@ export function EntityManager({ onLog }: EntityManagerProps) {
     try {
       const data: Entidad[] = await invoke("get_clientes");
       setEntidades(data);
-      onLog(`Entidades cargadas: ${data.length}`);
     } catch (err: any) {
-      onLog(`Error al cargar entidades: ${err}`);
+      console.error("Error al cargar entidades:", err);
     } finally {
       setLoading(false);
     }
@@ -71,9 +66,14 @@ export function EntityManager({ onLog }: EntityManagerProps) {
       {/* ── HERO HEADER ─────────────────────────────────────────────────── */}
       <div style={heroStyle}>
         <div style={heroInnerStyle}>
-          <div>
-            <h1 style={heroTitleStyle}>Gestión de Entidades</h1>
-            <p style={heroSubtitleStyle}>Clientes, proveedores y contactos de tu empresa</p>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <button onClick={() => navigate("/")} style={backBtnStyle} title="Volver al POS">
+              ← POS
+            </button>
+            <div>
+              <h1 style={heroTitleStyle}>Gestión de Entidades</h1>
+              <p style={heroSubtitleStyle}>Clientes, proveedores y contactos de tu empresa</p>
+            </div>
           </div>
           <button onClick={fetchEntidades} disabled={loading} style={refreshBtnStyle} title="Actualizar lista">
             <span style={{ display: "inline-block", animation: loading ? "spin 1s linear infinite" : "none" }}>↻</span>
@@ -173,23 +173,13 @@ export function EntityManager({ onLog }: EntityManagerProps) {
                 <EntityRow
                   key={e.id}
                   entity={e}
-                  isSelected={selectedEntity?.id === e.id}
-                  onClick={() => setSelectedEntity(e)}
+                  onClick={() => navigate(`/entities/${e.id}`)}
                 />
               ))}
             </tbody>
           </table>
         )}
       </div>
-
-      {/* Detail panel */}
-      {selectedEntity && (
-        <EntityDetailPanel
-          entity={selectedEntity}
-          onClose={() => setSelectedEntity(null)}
-          onLog={onLog}
-        />
-      )}
 
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -206,16 +196,13 @@ export function EntityManager({ onLog }: EntityManagerProps) {
 // ── Row sub-component ──────────────────────────────────────────────────────
 function EntityRow({
   entity,
-  isSelected,
   onClick,
 }: {
   entity: Entidad;
-  isSelected: boolean;
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const roles = parseRoles(entity.roles);
-  const active = hovered || isSelected;
 
   return (
     <tr
@@ -225,11 +212,7 @@ function EntityRow({
       style={{
         borderBottom: "1px solid var(--border-default)",
         cursor: "pointer",
-        backgroundColor: isSelected
-          ? "var(--status-info-bg)"
-          : active
-          ? "var(--bg-page)"
-          : "transparent",
+        backgroundColor: hovered ? "var(--bg-page)" : "transparent",
         transition: "background-color 0.12s",
         animation: "fadeInRow 0.2s ease both",
       }}
@@ -362,6 +345,20 @@ const refreshBtnStyle: React.CSSProperties = {
   backgroundColor: "rgba(255,255,255,0.12)",
   color: "#fff",
   border: "1px solid rgba(255,255,255,0.2)",
+  borderRadius: "10px",
+  padding: "9px 16px",
+  fontWeight: "600",
+  fontSize: "13px",
+  cursor: "pointer",
+  backdropFilter: "blur(6px)",
+  whiteSpace: "nowrap",
+  transition: "background 0.15s",
+};
+
+const backBtnStyle: React.CSSProperties = {
+  backgroundColor: "rgba(255,255,255,0.15)",
+  color: "#fff",
+  border: "1px solid rgba(255,255,255,0.25)",
   borderRadius: "10px",
   padding: "9px 16px",
   fontWeight: "600",

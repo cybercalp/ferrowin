@@ -1,10 +1,34 @@
+import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { SyncWarningBanner } from "./components/SyncWarningBanner";
 import { ThemeProvider } from "./theme/ThemeProvider";
 import { POSProvider } from "./pos/PosContext";
 import { POSMainLayout } from "./pos/POSMainLayout";
 import { LoginScreen } from "./screens/LoginScreen";
+import { EntityManager } from "./components/EntityManager";
+import { EntityDetailPanel } from "./components/EntityDetailPanel";
+import { ClientDossierView } from "./components/ClientDossierView";
+import { ClientCollection } from "./components/ClientCollection";
 import "./App.css";
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={loadingContainerStyle}>
+        <div style={loadingSpinnerStyle} />
+        <p style={loadingTextStyle}>Cargando...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -18,26 +42,69 @@ function AppContent() {
     );
   }
 
-  if (!isAuthenticated) {
-    return <LoginScreen />;
-  }
-
   return (
-    <>
-      <SyncWarningBanner />
-      <POSProvider>
-        <POSMainLayout />
-      </POSProvider>
-    </>
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          isAuthenticated ? <Navigate to="/" replace /> : <LoginScreen />
+        }
+      />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <SyncWarningBanner />
+            <POSProvider>
+              <POSMainLayout />
+            </POSProvider>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/entities"
+        element={
+          <ProtectedRoute>
+            <EntityManager />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/entities/:id"
+        element={
+          <ProtectedRoute>
+            <EntityDetailPanel />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/clients/:id/dossier"
+        element={
+          <ProtectedRoute>
+            <ClientDossierView />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/clients/:id/collection"
+        element={
+          <ProtectedRoute>
+            <ClientCollection />
+          </ProtectedRoute>
+        }
+      />
+    </Routes>
   );
 }
 
 function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </BrowserRouter>
     </ThemeProvider>
   );
 }
