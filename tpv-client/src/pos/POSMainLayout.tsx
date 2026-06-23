@@ -42,7 +42,7 @@ export function POSMainLayout() {
     localStorage.setItem(RPW_KEY, String(w));
   }, []);
 
-  // Load terminal health on mount + listen for live sync-status updates
+  // Load terminal health on mount + sync catalog + listen for live sync-status updates
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
@@ -52,6 +52,13 @@ export function POSMainLayout() {
         // real online status from the shared AtomicBool.
         const health = await invoke<any>("get_terminal_health");
         dispatch({ type: "SET_TERMINAL_HEALTH", payload: health });
+
+        // Sync catalog from backend (products, families, tax types)
+        try {
+          await invoke("sync_catalog");
+        } catch {
+          // silent — catalog sync may fail if offline or no token
+        }
 
         // Reactively keep terminalHealth.online in sync with the
         // background sync loop (every 30 s).
