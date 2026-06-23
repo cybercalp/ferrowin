@@ -57,6 +57,7 @@ CREATE TABLE series_facturacion (
 -- Traceable Sales Documents
 CREATE TABLE presupuestos (
     id UUID PRIMARY KEY,
+    empresa_id UUID NOT NULL,
     cliente_id UUID NOT NULL,
     total NUMERIC(12,2) NOT NULL,
     estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
@@ -65,6 +66,7 @@ CREATE TABLE presupuestos (
 
 CREATE TABLE pedidos (
     id UUID PRIMARY KEY,
+    empresa_id UUID NOT NULL,
     presupuesto_id UUID REFERENCES presupuestos(id) ON DELETE SET NULL,
     total NUMERIC(12,2) NOT NULL,
     estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
@@ -73,7 +75,9 @@ CREATE TABLE pedidos (
 
 CREATE TABLE albaranes (
     id UUID PRIMARY KEY,
+    empresa_id UUID NOT NULL,
     pedido_id UUID REFERENCES pedidos(id) ON DELETE SET NULL,
+    almacen_id UUID NOT NULL,
     total NUMERIC(12,2) NOT NULL,
     estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Convertido', 'Anulado')),
     created_at TIMESTAMP DEFAULT NOW()
@@ -81,6 +85,7 @@ CREATE TABLE albaranes (
 
 CREATE TABLE facturas (
     id UUID PRIMARY KEY,
+    empresa_id UUID NOT NULL,
     albaran_id UUID REFERENCES albaranes(id) ON DELETE SET NULL,
     terminal_id UUID REFERENCES terminals(id) ON DELETE RESTRICT,
     serie_facturacion_id UUID REFERENCES series_facturacion(id) ON DELETE RESTRICT,
