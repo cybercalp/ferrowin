@@ -391,7 +391,7 @@ func TestSalesSyncController_HandleSyncSales_InvalidPayload(t *testing.T) {
 
 	t.Run("Scenario: Invalid invoice number format", func(t *testing.T) {
 		saleID := uuid.New().String()
-		body := `{"sales": [{"id":"` + saleID + `","invoice_number":"INVALID","sequence_number":1,"created_at":"2026-06-05T13:00:00Z","total":100.0,"items":[]}]}`
+		body := `{"sales": [{"id":"` + saleID + `","invoice_number":"INVALID","sequence_number":1,"created_at":"2026-06-05T13:00:00Z","total":100.0,"items":[{"item_id":"` + uuid.New().String() + `","quantity":1.0,"unit_price":100.0}]}]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/sales", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Idempotency-Key", uuid.New().String())
@@ -409,7 +409,7 @@ func TestSalesSyncController_HandleSyncSales_InvalidPayload(t *testing.T) {
 	t.Run("Scenario: Invoicing series not found for prefix", func(t *testing.T) {
 		saleID := uuid.New().String()
 		// Prefix "XX" has no invoicing series seeded
-		body := `{"sales": [{"id":"` + saleID + `","invoice_number":"XX-1","sequence_number":1,"created_at":"2026-06-05T13:00:00Z","total":100.0,"items":[]}]}`
+		body := `{"sales": [{"id":"` + saleID + `","invoice_number":"XX-1","sequence_number":1,"created_at":"2026-06-05T13:00:00Z","total":100.0,"items":[{"item_id":"` + uuid.New().String() + `","quantity":1.0,"unit_price":100.0}]}]}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/sales", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Idempotency-Key", uuid.New().String())

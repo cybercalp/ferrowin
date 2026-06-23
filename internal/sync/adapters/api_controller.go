@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type SalesSyncController struct {
 	idempTracker     *idempotency.Tracker
 	billingService   InvoiceNumberGenerator
 	defaultWarehouse uuid.UUID
+	empresaID        uuid.UUID
 }
 
 // NewSalesSyncController creates a new SalesSyncController.
@@ -39,12 +41,18 @@ func NewSalesSyncController(db *sql.DB, isSQLite bool, inventoryService *domain.
 		idempTracker:     idempTracker,
 		billingService:   billingService,
 		defaultWarehouse: uuid.Nil,
+		empresaID:        uuid.Nil,
 	}
 }
 
 // SetDefaultWarehouse allows customizing the warehouse ID used for stock movements.
 func (c *SalesSyncController) SetDefaultWarehouse(id uuid.UUID) {
 	c.defaultWarehouse = id
+}
+
+// SetEmpresaID sets the empresa (company) ID for multi-tenancy enforcement.
+func (c *SalesSyncController) SetEmpresaID(id uuid.UUID) {
+	c.empresaID = id
 }
 
 // ServeHTTP makes the controller implement http.Handler.
@@ -226,15 +234,23 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 	// Define queries dynamically for SQLite vs Postgres
 	var selectSeriesQuery string
 	var insertInvoiceQuery string
+	var insertInvoiceLineaQuery string
+	var checkInvoiceExistsQuery string
 
 	if c.isSQLite {
-		selectSeriesQuery = "SELECT id, terminal_id FROM invoicing_series WHERE prefix = ?"
-		insertInvoiceQuery = `INSERT INTO invoice (id, delivery_note_id, terminal_id, invoicing_series_id, invoice_number, sequence_number, total, status, created_at, firma_registro, hash_anterior, datos_encadenamiento)
-							  VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		selectSeriesQuery = "SELECT id, terminal_id, empresa_id FROM invoicing_series WHERE prefix = ?"
+		insertInvoiceQuery = `INSERT INTO invoice (id, delivery_note_id, terminal_id, invoicing_series_id, invoice_number, sequence_number, total, status, empresa_id, created_at, firma_registro, hash_anterior, datos_encadenamiento)
+							  VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		insertInvoiceLineaQuery = `INSERT INTO invoice_lineas (id, invoice_id, item_id, cantidad, precio_unitario, warehouse_id)
+								   VALUES (?, ?, ?, ?, ?, ?)`
+		checkInvoiceExistsQuery = "SELECT COUNT(*) FROM invoice WHERE id = ?"
 	} else {
-		selectSeriesQuery = "SELECT id, terminal_id FROM invoicing_series WHERE prefix = $1"
-		insertInvoiceQuery = `INSERT INTO invoice (id, delivery_note_id, terminal_id, invoicing_series_id, invoice_number, sequence_number, total, status, created_at, firma_registro, hash_anterior, datos_encadenamiento)
-							  VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+		selectSeriesQuery = "SELECT id, terminal_id, empresa_id FROM invoicing_series WHERE prefix = $1"
+		insertInvoiceQuery = `INSERT INTO invoice (id, delivery_note_id, terminal_id, invoicing_series_id, invoice_number, sequence_number, total, status, empresa_id, created_at, firma_registro, hash_anterior, datos_encadenamiento)
+							  VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+		insertInvoiceLineaQuery = `INSERT INTO invoice_lineas (id, invoice_id, item_id, cantidad, precio_unitario, warehouse_id)
+								   VALUES ($1, $2, $3, $4, $5, $6)`
+		checkInvoiceExistsQuery = "SELECT COUNT(*) FROM invoice WHERE id = $1"
 	}
 
 	for _, sale := range req.Sales {
@@ -244,6 +260,40 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 			return
 		}
 
+		// [FIX 3] Duplicate sale prevention: check if invoice ID already exists
+		var existingCount int
+		err = tx.QueryRowContext(r.Context(), checkInvoiceExistsQuery, saleUUID.String()).Scan(&existingCount)
+		if err != nil {
+			http.Error(w, "database error checking duplicate sale: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if existingCount > 0 {
+			// Sale already synced — skip it (idempotent at business level)
+			invoiceNumbers[sale.ID] = sale.NumeroFactura
+			processedIDs = append(processedIDs, sale.ID)
+			continue
+		}
+
+		// [FIX 4] Input validation
+		if sale.Total <= 0 {
+			http.Error(w, "invalid sale total: must be > 0", http.StatusBadRequest)
+			return
+		}
+		if len(sale.Items) == 0 {
+			http.Error(w, "sale must have at least one item", http.StatusBadRequest)
+			return
+		}
+		for _, item := range sale.Items {
+			if item.Quantity <= 0 {
+				http.Error(w, "invalid item quantity: must be > 0", http.StatusBadRequest)
+				return
+			}
+			if item.UnitPrice < 0 {
+				http.Error(w, "invalid item unit_price: must be >= 0", http.StatusBadRequest)
+				return
+			}
+		}
+
 		parts := strings.Split(sale.NumeroFactura, "-")
 		if len(parts) < 2 {
 			http.Error(w, "invalid invoice number format: "+sale.NumeroFactura, http.StatusBadRequest)
@@ -251,8 +301,8 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 		}
 		prefix := parts[0]
 
-		var seriesIDStr, terminalIDStr string
-		err = tx.QueryRowContext(r.Context(), selectSeriesQuery, prefix).Scan(&seriesIDStr, &terminalIDStr)
+		var seriesIDStr, terminalIDStr, empresaIDStr string
+		err = tx.QueryRowContext(r.Context(), selectSeriesQuery, prefix).Scan(&seriesIDStr, &terminalIDStr, &empresaIDStr)
 		if err == sql.ErrNoRows {
 			http.Error(w, "invoicing series not found for prefix: "+prefix, http.StatusBadRequest)
 			return
@@ -263,6 +313,13 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 
 		seriesUUID, _ := uuid.Parse(seriesIDStr)
 		terminalUUID, _ := uuid.Parse(terminalIDStr)
+		seriesEmpresaUUID, _ := uuid.Parse(empresaIDStr)
+
+		// [FIX 1] Multi-tenancy: verify empresa_id matches
+		if c.empresaID != uuid.Nil && seriesEmpresaUUID != c.empresaID {
+			http.Error(w, "empresa_id mismatch: series belongs to a different company", http.StatusForbidden)
+			return
+		}
 
 		// Generate server-side invoice number using the billing service
 		invoiceNumber, seq, err := c.billingService.GenerateFacturaNumber(r.Context(), terminalUUID)
@@ -279,7 +336,7 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 			}
 		}
 
-		// Insert Invoice with server-generated invoice_number and sequence_number
+		// [FIX 1] Insert Invoice with empresa_id from the series
 		_, err = tx.ExecContext(r.Context(), insertInvoiceQuery,
 			saleUUID.String(),
 			terminalUUID.String(),
@@ -288,6 +345,7 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 			seq,
 			sale.Total,
 			"Issued",
+			seriesEmpresaUUID.String(),
 			parsedCreatedAt.UTC(),
 			sale.FirmaRegistro,
 			sale.HashAnterior,
@@ -298,11 +356,26 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		// Insert Movements
+		// Insert Movements and invoice line items
 		for _, item := range sale.Items {
 			itemUUID, err := uuid.Parse(item.ItemID)
 			if err != nil {
 				http.Error(w, "invalid item ID: "+item.ItemID, http.StatusBadRequest)
+				return
+			}
+
+			// Store invoice line for void stock reversal support
+			lineaID := uuid.New().String()
+			_, err = tx.ExecContext(r.Context(), insertInvoiceLineaQuery,
+				lineaID,
+				saleUUID.String(),
+				itemUUID.String(),
+				item.Quantity,
+				item.UnitPrice,
+				c.defaultWarehouse.String(),
+			)
+			if err != nil {
+				http.Error(w, "failed to insert invoice line: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 
@@ -330,6 +403,25 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 				return
 			}
 		}
+
+		// [FIX 6] Audit trail: record successful sale sync
+		auditID := uuid.New().String()
+		var auditInsertQuery string
+		if c.isSQLite {
+			auditInsertQuery = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, detalles, created_at)
+								VALUES (?, 'invoice', ?, ?, 'sync_venta', ?, ?)`
+		} else {
+			auditInsertQuery = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, detalles, created_at)
+								VALUES ($1, 'invoice', $2, $3, 'sync_venta', $4, $5)`
+		}
+		auditDetalles := `{"invoice_number":"` + invoiceNumber + `","pos_sale_id":"` + sale.ID + `"}`
+		_, _ = tx.ExecContext(r.Context(), auditInsertQuery,
+			auditID,
+			saleUUID.String(),
+			seriesEmpresaUUID.String(),
+			auditDetalles,
+			time.Now().UTC(),
+		)
 
 		invoiceNumbers[sale.ID] = invoiceNumber
 		processedIDs = append(processedIDs, sale.ID)
@@ -429,6 +521,16 @@ func (c *SalesSyncController) HandleSyncClosures(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// [FIX 4] Input validation for closure
+	if req.CashReported < 0 {
+		http.Error(w, "invalid cash_reported: must be >= 0", http.StatusBadRequest)
+		return
+	}
+	if req.CardReported < 0 {
+		http.Error(w, "invalid card_reported: must be >= 0", http.StatusBadRequest)
+		return
+	}
+
 	closureUUID, err := uuid.Parse(req.ID)
 	if err != nil {
 		http.Error(w, "invalid closure ID: "+req.ID, http.StatusBadRequest)
@@ -475,6 +577,27 @@ func (c *SalesSyncController) HandleSyncClosures(w http.ResponseWriter, r *http.
 	if err := tx.Commit(); err != nil {
 		http.Error(w, "failed to commit transaction: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// [FIX 6] Audit trail: record successful closure sync
+	if c.empresaID != uuid.Nil {
+		auditID := uuid.New().String()
+		var auditInsertQuery string
+		if c.isSQLite {
+			auditInsertQuery = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, detalles, created_at)
+								VALUES (?, 'box_closure', ?, ?, 'sync_cierre_caja', ?, ?)`
+		} else {
+			auditInsertQuery = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, detalles, created_at)
+								VALUES ($1, 'box_closure', $2, $3, 'sync_cierre_caja', $4, $5)`
+		}
+		auditDetalles := `{"cash_reported":` + fmt.Sprintf("%.2f", req.CashReported) + `,"card_reported":` + fmt.Sprintf("%.2f", req.CardReported) + `}`
+		_, _ = c.db.ExecContext(r.Context(), auditInsertQuery,
+			auditID,
+			closureUUID.String(),
+			c.empresaID.String(),
+			auditDetalles,
+			time.Now().UTC(),
+		)
 	}
 
 	// Prepare response
@@ -578,7 +701,7 @@ func (c *SalesSyncController) HandleSyncVoids(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Open transaction for atomic check + insert
+	// Open transaction for atomic check + insert + stock reversal
 	tx, err := c.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		http.Error(w, "failed to start transaction: "+err.Error(), http.StatusInternalServerError)
@@ -586,23 +709,122 @@ func (c *SalesSyncController) HandleSyncVoids(w http.ResponseWriter, r *http.Req
 	}
 	defer tx.Rollback()
 
-	// Check if sale_id already voided
-	var searchQuery string
-	searchStr := `"sale_id":"` + req.SaleID + `"`
+	txCtx := inventoryadapters.WithTx(r.Context(), tx)
+
+	// [FIX 5] Void status guard: check if sale exists
+	var selectInvoiceQuery string
+	var selectInvoiceLinesQuery string
+	var checkVoidExistsQuery string
 	if c.isSQLite {
-		searchQuery = "SELECT COUNT(*) FROM registro_sucesos WHERE tipo_evento = 'ANULACION' AND detalles LIKE '%' || ? || '%'"
+		selectInvoiceQuery = "SELECT id, empresa_id, status FROM invoice WHERE id = ?"
+		selectInvoiceLinesQuery = "SELECT item_id, cantidad, warehouse_id FROM invoice_lineas WHERE invoice_id = ?"
+		checkVoidExistsQuery = "SELECT COUNT(*) FROM registro_sucesos WHERE tipo_evento = 'ANULACION' AND detalles LIKE '%' || ? || '%'"
 	} else {
-		searchQuery = "SELECT COUNT(*) FROM registro_sucesos WHERE tipo_evento = 'ANULACION' AND detalles LIKE '%' || $1 || '%'"
+		selectInvoiceQuery = "SELECT id, empresa_id, status FROM invoice WHERE id = $1"
+		selectInvoiceLinesQuery = "SELECT item_id, cantidad, warehouse_id FROM invoice_lineas WHERE invoice_id = $1"
+		checkVoidExistsQuery = "SELECT COUNT(*) FROM registro_sucesos WHERE tipo_evento = 'ANULACION' AND detalles LIKE '%' || $1 || '%'"
 	}
 
+	saleUUID, err := uuid.Parse(req.SaleID)
+	if err != nil {
+		http.Error(w, "invalid sale_id format: "+req.SaleID, http.StatusBadRequest)
+		return
+	}
+
+	var invoiceIDStr, invoiceEmpresaIDStr, invoiceStatus string
+	err = tx.QueryRowContext(r.Context(), selectInvoiceQuery, saleUUID.String()).Scan(&invoiceIDStr, &invoiceEmpresaIDStr, &invoiceStatus)
+	if err == sql.ErrNoRows {
+		http.Error(w, "sale not found: "+req.SaleID, http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, "database error querying invoice: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// [FIX 5] Check if already voided
+	if invoiceStatus == "Anulado" {
+		http.Error(w, "sale already voided", http.StatusConflict)
+		return
+	}
+
+	// [FIX 1] Multi-tenancy: verify empresa_id matches
+	invoiceEmpresaUUID, _ := uuid.Parse(invoiceEmpresaIDStr)
+	if c.empresaID != uuid.Nil && invoiceEmpresaUUID != c.empresaID {
+		http.Error(w, "empresa_id mismatch: sale belongs to a different company", http.StatusForbidden)
+		return
+	}
+
+	// Also check registro_sucesos for legacy ANULACION events
+	searchStr := `"sale_id":"` + req.SaleID + `"`
 	var voidCount int
-	err = tx.QueryRowContext(r.Context(), searchQuery, searchStr).Scan(&voidCount)
+	err = tx.QueryRowContext(r.Context(), checkVoidExistsQuery, searchStr).Scan(&voidCount)
 	if err != nil {
 		http.Error(w, "database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if voidCount > 0 {
 		http.Error(w, "sale already voided", http.StatusConflict)
+		return
+	}
+
+	// [FIX 2] Void stock reversal: query invoice items and reverse stock
+	rows, err := tx.QueryContext(r.Context(), selectInvoiceLinesQuery, saleUUID.String())
+	if err != nil {
+		http.Error(w, "database error querying invoice lines: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type invoiceLine struct {
+		ItemID      uuid.UUID
+		Quantity    float64
+		WarehouseID uuid.UUID
+	}
+	var lines []invoiceLine
+	for rows.Next() {
+		var line invoiceLine
+		var itemIDStr, warehouseIDStr string
+		var qty float64
+		if err := rows.Scan(&itemIDStr, &qty, &warehouseIDStr); err != nil {
+			rows.Close()
+			http.Error(w, "error scanning invoice line: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		line.ItemID, _ = uuid.Parse(itemIDStr)
+		line.Quantity = qty
+		line.WarehouseID, _ = uuid.Parse(warehouseIDStr)
+		lines = append(lines, line)
+	}
+	rows.Close()
+
+	// Reverse stock for each item
+	refDocType := "INVOICE_VOID"
+	for _, line := range lines {
+		if line.Quantity > 0 {
+			_, err = c.inventoryService.RecordReturn(
+				txCtx,
+				line.ItemID,
+				line.WarehouseID,
+				line.Quantity,
+				&refDocType,
+				&saleUUID,
+			)
+			if err != nil {
+				http.Error(w, "failed to reverse stock for item "+line.ItemID.String()+": "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	// Update invoice status to Anulado
+	var updateStatusQuery string
+	if c.isSQLite {
+		updateStatusQuery = "UPDATE invoice SET status = 'Anulado' WHERE id = ?"
+	} else {
+		updateStatusQuery = "UPDATE invoice SET status = 'Anulado' WHERE id = $1"
+	}
+	_, err = tx.ExecContext(r.Context(), updateStatusQuery, saleUUID.String())
+	if err != nil {
+		http.Error(w, "failed to update invoice status: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -636,6 +858,25 @@ func (c *SalesSyncController) HandleSyncVoids(w http.ResponseWriter, r *http.Req
 		http.Error(w, "failed to insert void event: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// [FIX 6] Audit trail: record successful void sync
+	auditID := uuid.New().String()
+	var auditInsertQuery string
+	if c.isSQLite {
+		auditInsertQuery = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, detalles, created_at)
+							VALUES (?, 'invoice', ?, ?, 'sync_anulacion', ?, ?)`
+	} else {
+		auditInsertQuery = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, detalles, created_at)
+							VALUES ($1, 'invoice', $2, $3, 'sync_anulacion', $4, $5)`
+	}
+	auditDetalles := `{"reason":"` + req.Motivo + `","stock_reversed":true}`
+	_, _ = tx.ExecContext(r.Context(), auditInsertQuery,
+		auditID,
+		saleUUID.String(),
+		invoiceEmpresaUUID.String(),
+		auditDetalles,
+		time.Now().UTC(),
+	)
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {

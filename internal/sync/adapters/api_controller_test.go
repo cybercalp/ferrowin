@@ -36,7 +36,8 @@ func setupControllerTestDB(t *testing.T) (*sql.DB, func()) {
 			id TEXT PRIMARY KEY,
 			terminal_id TEXT REFERENCES terminals(id) ON DELETE RESTRICT,
 			prefix TEXT UNIQUE NOT NULL,
-			next_sequence INTEGER NOT NULL DEFAULT 1
+			next_sequence INTEGER NOT NULL DEFAULT 1,
+			empresa_id TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE invoice (
 			id TEXT PRIMARY KEY,
@@ -47,17 +48,26 @@ func setupControllerTestDB(t *testing.T) (*sql.DB, func()) {
 			sequence_number INTEGER NOT NULL,
 			total REAL NOT NULL,
 			status TEXT,
+			empresa_id TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			firma_registro TEXT,
 			hash_anterior TEXT,
 			datos_encadenamiento TEXT
+		)`,
+		`CREATE TABLE invoice_lineas (
+			id TEXT PRIMARY KEY,
+			invoice_id TEXT NOT NULL,
+			item_id TEXT NOT NULL,
+			cantidad REAL NOT NULL,
+			precio_unitario REAL NOT NULL,
+			warehouse_id TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE stock_ledger_movements (
 			id TEXT PRIMARY KEY,
 			item_id TEXT NOT NULL,
 			warehouse_id TEXT NOT NULL,
 			quantity REAL NOT NULL,
-			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT')),
+			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT', 'RETURN')),
 			reference_document_type TEXT,
 			reference_document_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -68,6 +78,16 @@ func setupControllerTestDB(t *testing.T) (*sql.DB, func()) {
 			tipo_evento TEXT NOT NULL,
 			detalles TEXT NOT NULL,
 			estado_sincronizacion TEXT NOT NULL DEFAULT 'PENDING'
+		)`,
+		`CREATE TABLE registro_eventos (
+			id TEXT PRIMARY KEY,
+			documento_tipo TEXT NOT NULL,
+			documento_id TEXT NOT NULL,
+			empresa_id TEXT NOT NULL,
+			accion TEXT NOT NULL,
+			usuario_id TEXT,
+			detalles TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 	}
 
@@ -122,7 +142,8 @@ func TestSalesSyncController_HandleSyncSales(t *testing.T) {
 	}
 
 	seriesID := uuid.New()
-	_, err = db.Exec("INSERT INTO invoicing_series (id, terminal_id, prefix, next_sequence) VALUES (?, ?, 'S1', 10)", seriesID.String(), terminalID.String())
+	empresaID := uuid.New()
+	_, err = db.Exec("INSERT INTO invoicing_series (id, terminal_id, prefix, next_sequence, empresa_id) VALUES (?, ?, 'S1', 10, ?)", seriesID.String(), terminalID.String(), empresaID.String())
 	if err != nil {
 		t.Fatalf("failed to seed series: %v", err)
 	}
@@ -324,9 +345,28 @@ func TestSalesSyncController_HandleSyncVoids(t *testing.T) {
 	invService := inventorydomain.NewInventoryService(ledgerRepo)
 	controller := adapters.NewSalesSyncController(db, true, invService, tracker, &mockInvoiceGenerator{invoiceNumber: "S1-16", seq: 16})
 
-	saleID := uuid.New().String()
+	// Seed terminal, series, and invoice for void testing
+	terminalID := uuid.New()
+	empresaID := uuid.New()
+	_, _ = db.Exec("INSERT INTO terminals (id, name, is_active) VALUES (?, 'TPV-VOID', 1)", terminalID.String())
+	seriesID := uuid.New()
+	_, _ = db.Exec("INSERT INTO invoicing_series (id, terminal_id, prefix, next_sequence, empresa_id) VALUES (?, ?, 'V1', 1, ?)", seriesID.String(), terminalID.String(), empresaID.String())
 
-	t.Run("Scenario: Valid void sync returns 200", func(t *testing.T) {
+	saleID := uuid.New().String()
+	itemID := uuid.New().String()
+	warehouseID := uuid.New()
+	_, _ = db.Exec(`INSERT INTO invoice (id, terminal_id, invoicing_series_id, invoice_number, sequence_number, total, status, empresa_id, created_at)
+		VALUES (?, ?, ?, 'V1-1', 1, 100.00, 'Issued', ?, datetime('now'))`, saleID, terminalID.String(), seriesID.String(), empresaID.String())
+	_, _ = db.Exec(`INSERT INTO invoice_lineas (id, invoice_id, item_id, cantidad, precio_unitario, warehouse_id)
+		VALUES (?, ?, ?, 2.0, 50.00, ?)`, uuid.New().String(), saleID, itemID, warehouseID.String())
+
+	// Record initial stock movement (simulate the sale that will be voided)
+	docType := "INVOICE"
+	saleUUID, _ := uuid.Parse(saleID)
+	itemUUID, _ := uuid.Parse(itemID)
+	_, _ = invService.RecordSyncAdjustment(ctx, itemUUID, warehouseID, 2.0, &docType, &saleUUID)
+
+	t.Run("Scenario: Valid void sync returns 200 and reverses stock", func(t *testing.T) {
 		idemKey := uuid.New().String()
 		body := `{"sale_id":"` + saleID + `","reason":"Operator error","firma_registro":"void-sig-001","hash_anterior":"prev-hash-001"}`
 
@@ -364,10 +404,60 @@ func TestSalesSyncController_HandleSyncVoids(t *testing.T) {
 		if !strings.Contains(detalles, saleID) {
 			t.Errorf("expected detalles to contain sale_id %s, got %s", saleID, detalles)
 		}
+
+		// Verify invoice status was updated to Anulado
+		var invStatus string
+		err = db.QueryRow("SELECT status FROM invoice WHERE id = ?", saleID).Scan(&invStatus)
+		if err != nil {
+			t.Fatalf("failed to query invoice status: %v", err)
+		}
+		if invStatus != "Anulado" {
+			t.Errorf("expected invoice status 'Anulado', got %q", invStatus)
+		}
+	})
+
+	t.Run("Scenario: Void non-existent sale returns 404", func(t *testing.T) {
+		idemKey := uuid.New().String()
+		fakeSaleID := uuid.New().String()
+		body := `{"sale_id":"` + fakeSaleID + `","reason":"Ghost sale","firma_registro":"void-sig-ghost","hash_anterior":"prev-hash-ghost"}`
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/voids", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", idemKey)
+		w := httptest.NewRecorder()
+		controller.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404 Not Found for non-existent sale, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("Scenario: Void already-voided sale returns 409", func(t *testing.T) {
+		idemKey := uuid.New().String()
+		body := `{"sale_id":"` + saleID + `","reason":"Also wrong","firma_registro":"void-sig-002","hash_anterior":"prev-hash-002"}`
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/voids", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", idemKey)
+		w := httptest.NewRecorder()
+		controller.ServeHTTP(w, req)
+
+		if w.Code != http.StatusConflict {
+			t.Errorf("expected 409 Conflict for already-voided sale, got %d: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "sale already voided") {
+			t.Errorf("expected 'sale already voided' error, got: %s", w.Body.String())
+		}
 	})
 
 	t.Run("Scenario: Duplicate void with same idempotency key returns cached response", func(t *testing.T) {
+		// Create a fresh invoice for this test
 		freshSaleID := uuid.New().String()
+		_, _ = db.Exec(`INSERT INTO invoice (id, terminal_id, invoicing_series_id, invoice_number, sequence_number, total, status, empresa_id, created_at)
+			VALUES (?, ?, ?, 'V1-2', 2, 50.00, 'Issued', ?, datetime('now'))`, freshSaleID, terminalID.String(), seriesID.String(), empresaID.String())
+		_, _ = db.Exec(`INSERT INTO invoice_lineas (id, invoice_id, item_id, cantidad, precio_unitario, warehouse_id)
+			VALUES (?, ?, ?, 1.0, 50.00, ?)`, uuid.New().String(), freshSaleID, itemID, warehouseID.String())
+
 		idemKey := uuid.New().String()
 		body := `{"sale_id":"` + freshSaleID + `","reason":"Duplicate test","firma_registro":"void-sig-999","hash_anterior":"prev-hash-999"}`
 
@@ -393,25 +483,6 @@ func TestSalesSyncController_HandleSyncVoids(t *testing.T) {
 		}
 		if w1.Body.String() != w2.Body.String() {
 			t.Errorf("duplicate response body differs:\noriginal: %s\nduplicate: %s", w1.Body.String(), w2.Body.String())
-		}
-	})
-
-	t.Run("Scenario: Duplicate sale_id with different idempotency key returns 409", func(t *testing.T) {
-		// saleID was already voided in the first scenario
-		newID := uuid.New().String()
-		newBody := `{"sale_id":"` + saleID + `","reason":"Also wrong","firma_registro":"void-sig-002","hash_anterior":"prev-hash-002"}`
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/voids", bytes.NewBufferString(newBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Idempotency-Key", newID)
-		w := httptest.NewRecorder()
-		controller.ServeHTTP(w, req)
-
-		if w.Code != http.StatusConflict {
-			t.Errorf("expected 409 Conflict for duplicate sale_id, got %d: %s", w.Code, w.Body.String())
-		}
-		if !strings.Contains(w.Body.String(), "sale already voided") {
-			t.Errorf("expected 'sale already voided' error, got: %s", w.Body.String())
 		}
 	})
 
@@ -637,7 +708,8 @@ func TestSalesSyncController_HandleSyncSales_FIFOReconciliation(t *testing.T) {
 	}
 
 	seriesID := uuid.New()
-	_, err = db.Exec("INSERT INTO invoicing_series (id, terminal_id, prefix, next_sequence) VALUES (?, ?, 'S1', 10)", seriesID.String(), terminalID.String())
+	empresaID := uuid.New()
+	_, err = db.Exec("INSERT INTO invoicing_series (id, terminal_id, prefix, next_sequence, empresa_id) VALUES (?, ?, 'S1', 10, ?)", seriesID.String(), terminalID.String(), empresaID.String())
 	if err != nil {
 		t.Fatalf("failed to seed series: %v", err)
 	}
