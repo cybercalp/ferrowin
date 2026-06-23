@@ -1,6 +1,7 @@
 use tauri::Emitter;
 use serde::Serialize;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::db;
@@ -84,6 +85,7 @@ pub fn start_sync_loop(
     app_handle: tauri::AppHandle,
     db_path: String,
     backend_url: String,
+    online_flag: Arc<AtomicBool>,
 ) {
     let backend_url = Arc::new(backend_url);
     let db_path = Arc::new(db_path);
@@ -95,8 +97,6 @@ pub fn start_sync_loop(
             .expect("failed to build HTTP client");
 
         loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
-
             // Network check: lightweight HEAD request.
             let online = client
                 .head(format!("{}/api/v1/health", backend_url))
@@ -104,6 +104,9 @@ pub fn start_sync_loop(
                 .await
                 .map(|r| r.status().is_success())
                 .unwrap_or(false);
+
+            // Update shared online flag for get_terminal_health.
+            online_flag.store(online, Ordering::Relaxed);
 
             // Count pending records for the status event.
             let pending_count = count_pending(&db_path);
@@ -123,6 +126,8 @@ pub fn start_sync_loop(
                 sync_pending_events(&db_path, &backend_url, &client).await;
                 sync_pending_voids(&db_path, &backend_url, &client).await;
             }
+
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
 }

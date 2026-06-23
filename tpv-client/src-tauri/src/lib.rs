@@ -1,6 +1,8 @@
 use tauri::Manager;
 use tauri::State;
 use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::params;
 
 pub mod auth;
@@ -13,6 +15,7 @@ pub mod catalog_sync;
 pub struct DbState {
     pub db_path: String,
     pub backend_url: String,
+    pub online: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -384,7 +387,7 @@ fn get_terminal_health(state: State<'_, DbState>) -> Result<db::TerminalHealth, 
         db_size_bytes,
         pending_sales_count,
         pending_closures_count,
-        online_status: false,
+        online_status: state.online.load(Ordering::Relaxed),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
@@ -724,12 +727,14 @@ pub fn run() {
                 .unwrap_or_else(|_| "http://localhost:8080".to_string());
 
             // Start the background sync loop.
-            sync::start_sync_loop(app_handle, db_path_str.clone(), backend_url.clone());
+            let online_flag = Arc::new(AtomicBool::new(false));
+            sync::start_sync_loop(app_handle, db_path_str.clone(), backend_url.clone(), online_flag.clone());
 
             // Manage DbState
             let db_state = DbState {
                 db_path: db_path_str,
                 backend_url,
+                online: online_flag,
             };
             app.manage(db_state);
 
