@@ -7,3 +7,5 @@ ferrowin.exe
 *.db-shm
 *.log
 .vscode/
+
+dev/

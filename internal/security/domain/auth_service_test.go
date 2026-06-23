@@ -2,11 +2,14 @@ package domain_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"ferrowin/internal/security/domain"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // mockUserRepository implements ports.UserRepository for testing.
@@ -33,6 +36,19 @@ func (m *mockUserRepository) GetByUsername(ctx context.Context, username string)
 func (m *mockUserRepository) Save(ctx context.Context, user *domain.User) error {
 	m.users[user.ID] = user
 	return nil
+}
+
+func testJWTConfig() *domain.JWTConfig {
+	return domain.NewJWTConfig("test-secret-for-auth-service-test", 1*time.Hour)
+}
+
+func hashPwd(t *testing.T, password string) string {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+	return string(hash)
 }
 
 func TestAuthService_HasPermission(t *testing.T) {
@@ -91,7 +107,7 @@ func TestAuthService_HasPermission(t *testing.T) {
 		},
 	}
 
-	authSvc := domain.NewAuthService(mockRepo)
+	authSvc := domain.NewAuthService(mockRepo, testJWTConfig())
 
 	t.Run("Scenario: Authorize valid user permission (single group)", func(t *testing.T) {
 		// GIVEN a User in a Group with Role Set containing "read-audit" Role
@@ -107,9 +123,6 @@ func TestAuthService_HasPermission(t *testing.T) {
 	})
 
 	t.Run("Scenario: Deny user lacking permission (single group)", func(t *testing.T) {
-		// GIVEN a User in a Group with Role Set lacking "delete-user" Role
-		// WHEN the User requests user deletion
-		// THEN the system MUST return access denied
 		hasPerm, err := authSvc.HasPermission(ctx, validUserID, "delete-user")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -120,8 +133,6 @@ func TestAuthService_HasPermission(t *testing.T) {
 	})
 
 	t.Run("Scenario: Authorize permission from multiple groups", func(t *testing.T) {
-		// User is in both audit and sales groups.
-		// Check read-audit (from auditGroup) -> allowed
 		hasAuditPerm, err := authSvc.HasPermission(ctx, multiGroupUserID, "read-audit")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -130,7 +141,6 @@ func TestAuthService_HasPermission(t *testing.T) {
 			t.Errorf("expected multi-group user to have 'read-audit'")
 		}
 
-		// Check write-sales (from salesGroup) -> allowed
 		hasSalesPerm, err := authSvc.HasPermission(ctx, multiGroupUserID, "write-sales")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -139,7 +149,6 @@ func TestAuthService_HasPermission(t *testing.T) {
 			t.Errorf("expected multi-group user to have 'write-sales'")
 		}
 
-		// Check delete-user (not in any group) -> denied
 		hasDeletePerm, err := authSvc.HasPermission(ctx, multiGroupUserID, deleteUserRole.Name)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -157,6 +166,86 @@ func TestAuthService_HasPermission(t *testing.T) {
 		}
 		if hasPerm {
 			t.Errorf("expected non-existent user to NOT have permission")
+		}
+	})
+}
+
+func TestAuthService_Login(t *testing.T) {
+	ctx := context.Background()
+	cfg := testJWTConfig()
+
+	correctPassword := "secure-password-123"
+	hash := hashPwd(t, correctPassword)
+
+	userID := uuid.New()
+	testUser := &domain.User{
+		ID:           userID,
+		Username:     "admin",
+		PasswordHash: hash,
+		Groups:       []domain.Group{},
+	}
+
+	mockRepo := &mockUserRepository{
+		users: map[uuid.UUID]*domain.User{
+			userID: testUser,
+		},
+	}
+
+	authSvc := domain.NewAuthService(mockRepo, cfg)
+
+	t.Run("valid credentials return token and user info", func(t *testing.T) {
+		resp, err := authSvc.Login(ctx, "admin", correctPassword)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.Token == "" {
+			t.Error("expected non-empty token")
+		}
+		if resp.User == nil {
+			t.Fatal("expected non-nil user")
+		}
+		if resp.User.ID != userID {
+			t.Errorf("expected user ID %v, got %v", userID, resp.User.ID)
+		}
+		if resp.User.Username != "admin" {
+			t.Errorf("expected username 'admin', got %q", resp.User.Username)
+		}
+
+		// Validate that the returned token is valid
+		claims, err := cfg.ValidateToken(resp.Token)
+		if err != nil {
+			t.Fatalf("returned token should be valid: %v", err)
+		}
+		if claims.Username != "admin" {
+			t.Errorf("expected claims username 'admin', got %q", claims.Username)
+		}
+	})
+
+	t.Run("wrong password returns ErrInvalidCredentials", func(t *testing.T) {
+		_, err := authSvc.Login(ctx, "admin", "wrong-password")
+		if !errors.Is(err, domain.ErrInvalidCredentials) {
+			t.Errorf("expected ErrInvalidCredentials, got %v", err)
+		}
+	})
+
+	t.Run("unknown username returns ErrInvalidCredentials", func(t *testing.T) {
+		_, err := authSvc.Login(ctx, "nonexistent", correctPassword)
+		if !errors.Is(err, domain.ErrInvalidCredentials) {
+			t.Errorf("expected ErrInvalidCredentials, got %v", err)
+		}
+	})
+
+	t.Run("empty username returns ErrInvalidCredentials", func(t *testing.T) {
+		_, err := authSvc.Login(ctx, "", correctPassword)
+		if !errors.Is(err, domain.ErrInvalidCredentials) {
+			t.Errorf("expected ErrInvalidCredentials, got %v", err)
+		}
+	})
+
+	t.Run("empty password returns ErrInvalidCredentials", func(t *testing.T) {
+		_, err := authSvc.Login(ctx, "admin", "")
+		if !errors.Is(err, domain.ErrInvalidCredentials) {
+			t.Errorf("expected ErrInvalidCredentials, got %v", err)
 		}
 	})
 }

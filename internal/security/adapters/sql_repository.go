@@ -163,6 +163,46 @@ func (r *SQLUserRepository) GetByUsername(ctx context.Context, username string) 
 	return scanUserHierarchy(rows)
 }
 
+// List returns all users without hierarchy, ordered by username.
+func (r *SQLUserRepository) List(ctx context.Context) ([]domain.User, error) {
+	query := "SELECT id, username, password_hash FROM users ORDER BY username"
+	rows, err := getExecutor(ctx, r.db).QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []domain.User
+	for rows.Next() {
+		var u domain.User
+		var idStr string
+		if err := rows.Scan(&idStr, &u.Username, &u.PasswordHash); err != nil {
+			return nil, err
+		}
+		u.ID, err = uuid.Parse(idStr)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+// Delete removes a user by ID. Cascade handles junction table cleanup.
+func (r *SQLUserRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	var query string
+	if r.isSQLite {
+		query = "DELETE FROM users WHERE id = ?"
+	} else {
+		query = "DELETE FROM users WHERE id = $1"
+	}
+	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, id.String())
+	return err
+}
+
 // Save inserts or updates a user.
 func (r *SQLUserRepository) Save(ctx context.Context, user *domain.User) error {
 	var query string
@@ -446,6 +486,46 @@ func (r *SQLGroupRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain
 	}, nil
 }
 
+// List returns all groups ordered by name.
+func (r *SQLGroupRepository) List(ctx context.Context) ([]domain.Group, error) {
+	query := "SELECT id, name FROM groups ORDER BY name"
+	rows, err := getExecutor(ctx, r.db).QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []domain.Group
+	for rows.Next() {
+		var g domain.Group
+		var idStr string
+		if err := rows.Scan(&idStr, &g.Name); err != nil {
+			return nil, err
+		}
+		g.ID, err = uuid.Parse(idStr)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
+// Delete removes a group by ID. Cascade handles junction table cleanup.
+func (r *SQLGroupRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	var query string
+	if r.isSQLite {
+		query = "DELETE FROM groups WHERE id = ?"
+	} else {
+		query = "DELETE FROM groups WHERE id = $1"
+	}
+	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, id.String())
+	return err
+}
+
 // Save inserts or updates a group.
 func (r *SQLGroupRepository) Save(ctx context.Context, group *domain.Group) error {
 	var query string
@@ -472,6 +552,18 @@ func (r *SQLGroupRepository) AssignGroupToUser(ctx context.Context, userID uuid.
                  ON CONFLICT DO NOTHING`
 	}
 
+	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, userID.String(), groupID.String())
+	return err
+}
+
+// RemoveGroupFromUser removes a group assignment from a user.
+func (r *SQLGroupRepository) RemoveGroupFromUser(ctx context.Context, userID uuid.UUID, groupID uuid.UUID) error {
+	var query string
+	if r.isSQLite {
+		query = "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?"
+	} else {
+		query = "DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2"
+	}
 	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, userID.String(), groupID.String())
 	return err
 }
@@ -578,6 +670,46 @@ func (r *SQLRoleSetRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 	}, nil
 }
 
+// List returns all role sets ordered by name.
+func (r *SQLRoleSetRepository) List(ctx context.Context) ([]domain.RoleSet, error) {
+	query := "SELECT id, name FROM role_sets ORDER BY name"
+	rows, err := getExecutor(ctx, r.db).QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var roleSets []domain.RoleSet
+	for rows.Next() {
+		var rs domain.RoleSet
+		var idStr string
+		if err := rows.Scan(&idStr, &rs.Name); err != nil {
+			return nil, err
+		}
+		rs.ID, err = uuid.Parse(idStr)
+		if err != nil {
+			return nil, err
+		}
+		roleSets = append(roleSets, rs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return roleSets, nil
+}
+
+// Delete removes a role set by ID. Cascade handles junction table cleanup.
+func (r *SQLRoleSetRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	var query string
+	if r.isSQLite {
+		query = "DELETE FROM role_sets WHERE id = ?"
+	} else {
+		query = "DELETE FROM role_sets WHERE id = $1"
+	}
+	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, id.String())
+	return err
+}
+
 // Save inserts or updates a role set.
 func (r *SQLRoleSetRepository) Save(ctx context.Context, roleSet *domain.RoleSet) error {
 	var query string
@@ -604,6 +736,18 @@ func (r *SQLRoleSetRepository) AssignRoleSetToGroup(ctx context.Context, groupID
                  ON CONFLICT DO NOTHING`
 	}
 
+	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, groupID.String(), roleSetID.String())
+	return err
+}
+
+// RemoveRoleSetFromGroup removes a role set assignment from a group.
+func (r *SQLRoleSetRepository) RemoveRoleSetFromGroup(ctx context.Context, groupID uuid.UUID, roleSetID uuid.UUID) error {
+	var query string
+	if r.isSQLite {
+		query = "DELETE FROM group_role_sets WHERE group_id = ? AND role_set_id = ?"
+	} else {
+		query = "DELETE FROM group_role_sets WHERE group_id = $1 AND role_set_id = $2"
+	}
 	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, groupID.String(), roleSetID.String())
 	return err
 }
@@ -650,6 +794,46 @@ func (r *SQLRoleRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.
 	return &role, nil
 }
 
+// List returns all roles ordered by name.
+func (r *SQLRoleRepository) List(ctx context.Context) ([]domain.Role, error) {
+	query := "SELECT id, name FROM roles ORDER BY name"
+	rows, err := getExecutor(ctx, r.db).QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var roles []domain.Role
+	for rows.Next() {
+		var role domain.Role
+		var idStr string
+		if err := rows.Scan(&idStr, &role.Name); err != nil {
+			return nil, err
+		}
+		role.ID, err = uuid.Parse(idStr)
+		if err != nil {
+			return nil, err
+		}
+		roles = append(roles, role)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
+// Delete removes a role by ID. Cascade handles junction table cleanup.
+func (r *SQLRoleRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	var query string
+	if r.isSQLite {
+		query = "DELETE FROM roles WHERE id = ?"
+	} else {
+		query = "DELETE FROM roles WHERE id = $1"
+	}
+	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, id.String())
+	return err
+}
+
 // Save inserts or updates a role.
 func (r *SQLRoleRepository) Save(ctx context.Context, role *domain.Role) error {
 	var query string
@@ -676,6 +860,18 @@ func (r *SQLRoleRepository) AssignRoleToRoleSet(ctx context.Context, roleSetID u
                  ON CONFLICT DO NOTHING`
 	}
 
+	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, roleSetID.String(), roleID.String())
+	return err
+}
+
+// RemoveRoleFromRoleSet removes a role assignment from a role set.
+func (r *SQLRoleRepository) RemoveRoleFromRoleSet(ctx context.Context, roleSetID uuid.UUID, roleID uuid.UUID) error {
+	var query string
+	if r.isSQLite {
+		query = "DELETE FROM role_set_roles WHERE role_set_id = ? AND role_id = ?"
+	} else {
+		query = "DELETE FROM role_set_roles WHERE role_set_id = $1 AND role_id = $2"
+	}
 	_, err := getExecutor(ctx, r.db).ExecContext(ctx, query, roleSetID.String(), roleID.String())
 	return err
 }

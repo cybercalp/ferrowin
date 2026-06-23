@@ -11,16 +11,21 @@ import (
 )
 
 type mockPurchaseRepository struct {
-	saveCompanyFunc         func(ctx context.Context, c *Empresa) error
-	saveWarehouseFunc       func(ctx context.Context, w *Warehouse) error
-	getWarehouseFunc        func(ctx context.Context, id uuid.UUID) (*Warehouse, error)
-	saveSupplierFunc        func(ctx context.Context, s *Proveedor) error
-	getSuppliersFunc        func(ctx context.Context, empresaID uuid.UUID) ([]*Proveedor, error)
-	getSupplierFunc         func(ctx context.Context, id uuid.UUID) (*Proveedor, error)
-	savePurchaseOrderFunc   func(ctx context.Context, o *PedidoCompra) error
-	getPurchaseOrderFunc    func(ctx context.Context, id uuid.UUID) (*PedidoCompra, error)
-	savePurchaseReceiptFunc func(ctx context.Context, r *RecepcionCompra) error
-	getPurchaseReceiptFunc  func(ctx context.Context, id uuid.UUID) (*RecepcionCompra, error)
+	saveCompanyFunc          func(ctx context.Context, c *Empresa) error
+	saveWarehouseFunc        func(ctx context.Context, w *Warehouse) error
+	getWarehouseFunc         func(ctx context.Context, id uuid.UUID) (*Warehouse, error)
+	saveSupplierFunc         func(ctx context.Context, s *Proveedor) error
+	getSuppliersFunc         func(ctx context.Context, empresaID uuid.UUID) ([]*Proveedor, error)
+	getSupplierFunc          func(ctx context.Context, id uuid.UUID) (*Proveedor, error)
+	savePurchaseOrderFunc    func(ctx context.Context, o *PedidoCompra) error
+	getPurchaseOrderFunc     func(ctx context.Context, id uuid.UUID) (*PedidoCompra, error)
+	savePurchaseReceiptFunc  func(ctx context.Context, r *RecepcionCompra) error
+	getPurchaseReceiptFunc   func(ctx context.Context, id uuid.UUID) (*RecepcionCompra, error)
+	updateCompanyFunc        func(ctx context.Context, input UpdateCompanyInput) error
+	updateWarehouseFunc      func(ctx context.Context, input UpdateWarehouseInput) error
+	updateSupplierFunc       func(ctx context.Context, input UpdateSupplierInput) error
+	cancelPurchaseOrderFunc  func(ctx context.Context, id uuid.UUID) error
+	cancelPurchaseReceiptFunc func(ctx context.Context, id uuid.UUID) error
 }
 
 func (m *mockPurchaseRepository) SaveCompany(ctx context.Context, c *Empresa) error {
@@ -91,6 +96,57 @@ func (m *mockPurchaseRepository) GetPurchaseReceipt(ctx context.Context, id uuid
 		return m.getPurchaseReceiptFunc(ctx, id)
 	}
 	return nil, nil
+}
+
+func (m *mockPurchaseRepository) UpdateCompany(ctx context.Context, input UpdateCompanyInput) error {
+	if m.updateCompanyFunc != nil {
+		return m.updateCompanyFunc(ctx, input)
+	}
+	return nil
+}
+
+func (m *mockPurchaseRepository) UpdateWarehouse(ctx context.Context, input UpdateWarehouseInput) error {
+	if m.updateWarehouseFunc != nil {
+		return m.updateWarehouseFunc(ctx, input)
+	}
+	return nil
+}
+
+func (m *mockPurchaseRepository) UpdateSupplier(ctx context.Context, input UpdateSupplierInput) error {
+	if m.updateSupplierFunc != nil {
+		return m.updateSupplierFunc(ctx, input)
+	}
+	return nil
+}
+
+func (m *mockPurchaseRepository) CancelPurchaseOrder(ctx context.Context, id uuid.UUID) error {
+	if m.cancelPurchaseOrderFunc != nil {
+		return m.cancelPurchaseOrderFunc(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockPurchaseRepository) CancelPurchaseReceipt(ctx context.Context, id uuid.UUID) error {
+	if m.cancelPurchaseReceiptFunc != nil {
+		return m.cancelPurchaseReceiptFunc(ctx, id)
+	}
+	return nil
+}
+
+func (m *mockPurchaseRepository) GetCompanies(ctx context.Context) ([]*Empresa, error) {
+	return nil, nil
+}
+
+func (m *mockPurchaseRepository) GetAllWarehouses(ctx context.Context, empresaID uuid.UUID) ([]*Warehouse, error) {
+	return nil, nil
+}
+
+func (m *mockPurchaseRepository) ListPurchaseOrders(ctx context.Context, empresaID uuid.UUID, filter PurchaseOrderFilter) ([]*PedidoCompra, int, error) {
+	return nil, 0, nil
+}
+
+func (m *mockPurchaseRepository) ListPurchaseReceipts(ctx context.Context, empresaID uuid.UUID, filter PurchaseReceiptFilter) ([]*RecepcionCompra, int, error) {
+	return nil, 0, nil
 }
 
 type mockStockLedgerRepository struct {

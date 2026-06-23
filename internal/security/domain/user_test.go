@@ -6,6 +6,7 @@ import (
 	"ferrowin/internal/security/domain"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestUser_HasPermission(t *testing.T) {
@@ -148,4 +149,53 @@ func TestUser_HasPermission(t *testing.T) {
 			}
 		})
 	}
+}
+
+func hashPassword(t *testing.T, password string) string {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+	return string(hash)
+}
+
+func TestUser_VerifyPassword(t *testing.T) {
+	correctPassword := "secret123"
+	hash := hashPassword(t, correctPassword)
+
+	user := &domain.User{
+		ID:           uuid.New(),
+		Username:     "testuser",
+		PasswordHash: hash,
+	}
+
+	t.Run("correct password returns true", func(t *testing.T) {
+		if !user.VerifyPassword(correctPassword) {
+			t.Error("expected VerifyPassword to return true for correct password")
+		}
+	})
+
+	t.Run("wrong password returns false", func(t *testing.T) {
+		if user.VerifyPassword("wrongpassword") {
+			t.Error("expected VerifyPassword to return false for wrong password")
+		}
+	})
+
+	t.Run("empty password returns false", func(t *testing.T) {
+		if user.VerifyPassword("") {
+			t.Error("expected VerifyPassword to return false for empty password")
+		}
+	})
+
+	t.Run("malformed hash returns false", func(t *testing.T) {
+		badUser := &domain.User{
+			ID:           uuid.New(),
+			Username:     "badhash",
+			PasswordHash: "not-a-valid-bcrypt-hash",
+		}
+		if badUser.VerifyPassword("anything") {
+			t.Error("expected VerifyPassword to return false for malformed hash")
+		}
+	})
 }

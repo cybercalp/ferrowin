@@ -35,18 +35,55 @@ type BillingServiceRequired interface {
 	GenerateInvoiceNumber(ctx context.Context, terminalID uuid.UUID) (string, int, error)
 }
 
+// Update input types for partial updates (nil fields = don't update)
+type UpdateQuoteInput struct {
+	ID        uuid.UUID
+	ClientID  *uuid.UUID
+	ExpiresAt *time.Time
+}
+
+type UpdateOrderInput struct {
+	ID uuid.UUID
+}
+
+type UpdateDeliveryNoteInput struct {
+	ID uuid.UUID
+}
+
+// DocumentFilter holds optional filter fields for listing sales documents.
+type DocumentFilter struct {
+	EmpresaID *uuid.UUID
+	Estado    *string
+	ClientID  *uuid.UUID
+	Desde     *time.Time
+	Hasta     *time.Time
+	Page      int
+	PageSize  int
+}
+
 type SalesRepository interface {
 	SaveQuote(ctx context.Context, q *Quote) error
 	GetQuote(ctx context.Context, id uuid.UUID) (*Quote, error)
+	ListQuotes(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Quote, int, error)
+	UpdateQuote(ctx context.Context, input UpdateQuoteInput) error
+	CancelQuote(ctx context.Context, id uuid.UUID) error
 
 	SaveOrder(ctx context.Context, o *Order) error
 	GetOrder(ctx context.Context, id uuid.UUID) (*Order, error)
+	ListOrders(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Order, int, error)
+	UpdateOrder(ctx context.Context, input UpdateOrderInput) error
+	CancelOrder(ctx context.Context, id uuid.UUID) error
 
 	SaveDeliveryNote(ctx context.Context, dn *DeliveryNote) error
 	GetDeliveryNote(ctx context.Context, id uuid.UUID) (*DeliveryNote, error)
+	ListDeliveryNotes(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*DeliveryNote, int, error)
+	UpdateDeliveryNote(ctx context.Context, input UpdateDeliveryNoteInput) error
+	CancelDeliveryNote(ctx context.Context, id uuid.UUID) error
 
 	SaveInvoice(ctx context.Context, inv *Invoice) error
 	GetInvoice(ctx context.Context, id uuid.UUID) (*Invoice, error)
+	ListInvoices(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Invoice, int, error)
+	CancelInvoice(ctx context.Context, id uuid.UUID) error
 }
 
 // ConvertQuoteOptions specifies options when converting a quote.
@@ -83,6 +120,125 @@ func (s *SalesService) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+// List methods
+func (s *SalesService) ListQuotes(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Quote, int, error) {
+	filter.EmpresaID = &empresaID
+	return s.repo.ListQuotes(ctx, empresaID, filter)
+}
+
+func (s *SalesService) ListOrders(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Order, int, error) {
+	filter.EmpresaID = &empresaID
+	return s.repo.ListOrders(ctx, empresaID, filter)
+}
+
+func (s *SalesService) ListDeliveryNotes(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*DeliveryNote, int, error) {
+	filter.EmpresaID = &empresaID
+	return s.repo.ListDeliveryNotes(ctx, empresaID, filter)
+}
+
+func (s *SalesService) ListInvoices(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Invoice, int, error) {
+	filter.EmpresaID = &empresaID
+	return s.repo.ListInvoices(ctx, empresaID, filter)
+}
+
+// GetByID methods delegate to repository.
+func (s *SalesService) GetQuote(ctx context.Context, id uuid.UUID) (*Quote, error) {
+	return s.repo.GetQuote(ctx, id)
+}
+
+func (s *SalesService) GetOrder(ctx context.Context, id uuid.UUID) (*Order, error) {
+	return s.repo.GetOrder(ctx, id)
+}
+
+func (s *SalesService) GetDeliveryNote(ctx context.Context, id uuid.UUID) (*DeliveryNote, error) {
+	return s.repo.GetDeliveryNote(ctx, id)
+}
+
+func (s *SalesService) GetInvoice(ctx context.Context, id uuid.UUID) (*Invoice, error) {
+	return s.repo.GetInvoice(ctx, id)
+}
+
+// Update and Cancel methods
+func (s *SalesService) UpdateQuote(ctx context.Context, input UpdateQuoteInput) error {
+	return s.repo.UpdateQuote(ctx, input)
+}
+
+func (s *SalesService) UpdateOrder(ctx context.Context, input UpdateOrderInput) error {
+	return s.repo.UpdateOrder(ctx, input)
+}
+
+func (s *SalesService) UpdateDeliveryNote(ctx context.Context, input UpdateDeliveryNoteInput) error {
+	return s.repo.UpdateDeliveryNote(ctx, input)
+}
+
+func (s *SalesService) CancelQuote(ctx context.Context, empresaID, quoteID uuid.UUID) error {
+	q, err := s.repo.GetQuote(ctx, quoteID)
+	if err != nil {
+		return err
+	}
+	if q.EmpresaID != empresaID {
+		return ErrTenantMismatch
+	}
+	if q.Status == StatusCancelled {
+		return fmt.Errorf("%w: quote is already cancelled", ErrInvalidStatus)
+	}
+	if q.Status == StatusConverted {
+		return fmt.Errorf("%w: cannot cancel a converted quote", ErrInvalidStatus)
+	}
+	return s.repo.CancelQuote(ctx, quoteID)
+}
+
+func (s *SalesService) CancelOrder(ctx context.Context, empresaID, orderID uuid.UUID) error {
+	o, err := s.repo.GetOrder(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if o.EmpresaID != empresaID {
+		return ErrTenantMismatch
+	}
+	if o.Status == StatusCancelled {
+		return fmt.Errorf("%w: order is already cancelled", ErrInvalidStatus)
+	}
+	if o.Status == StatusConverted {
+		return fmt.Errorf("%w: cannot cancel a converted order", ErrInvalidStatus)
+	}
+	return s.repo.CancelOrder(ctx, orderID)
+}
+
+func (s *SalesService) CancelDeliveryNote(ctx context.Context, empresaID, dnID uuid.UUID) error {
+	dn, err := s.repo.GetDeliveryNote(ctx, dnID)
+	if err != nil {
+		return err
+	}
+	if dn.EmpresaID != empresaID {
+		return ErrTenantMismatch
+	}
+	if dn.Status == StatusCancelled {
+		return fmt.Errorf("%w: delivery note is already cancelled", ErrInvalidStatus)
+	}
+	if dn.Status == StatusConverted {
+		return fmt.Errorf("%w: cannot cancel a converted delivery note", ErrInvalidStatus)
+	}
+	if dn.Status == StatusProcessed {
+		return fmt.Errorf("%w: cannot cancel a processed delivery note", ErrInvalidStatus)
+	}
+	return s.repo.CancelDeliveryNote(ctx, dnID)
+}
+
+func (s *SalesService) CancelInvoice(ctx context.Context, empresaID, invoiceID uuid.UUID) error {
+	inv, err := s.repo.GetInvoice(ctx, invoiceID)
+	if err != nil {
+		return err
+	}
+	if inv.EmpresaID != empresaID {
+		return ErrTenantMismatch
+	}
+	if inv.Status == StatusCancelled {
+		return fmt.Errorf("%w: invoice is already cancelled", ErrInvalidStatus)
+	}
+	return s.repo.CancelInvoice(ctx, invoiceID)
 }
 
 // CreateQuote creates a new quote.

@@ -3,6 +3,7 @@ package adapters_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -467,14 +468,480 @@ func TestSQLStockLedgerRepository_TransactionPropagation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to query movements after commit: %v", err)
 		}
-		if len(fetched) != 1 {
-			t.Fatal("expected movement to exist after commit")
+	if len(fetched) != 1 {
+		t.Fatal("expected movement to exist after commit")
+	}
+	if fetched[0].ID != entry.ID {
+		t.Errorf("expected entry ID %s, got %s", entry.ID, fetched[0].ID)
+	}
+	if fetched[0].Quantity != 42.0 {
+		t.Errorf("expected quantity 42, got %f", fetched[0].Quantity)
+	}
+	})
+}
+
+// ---------- Transfer Repository Tests ----------
+
+func setupTransferRepoTestDB(t *testing.T) (*sql.DB, func()) {
+	db, err := sql.Open("sqlite", "file::memory:?cache=shared&_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatalf("failed to open test SQLite DB: %v", err)
+	}
+
+	queries := []string{
+		`CREATE TABLE traspasos_almacen (
+			id TEXT PRIMARY KEY,
+			empresa_id TEXT NOT NULL,
+			origen_id TEXT NOT NULL,
+			destino_id TEXT NOT NULL,
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Procesado', 'Cancelado')),
+			created_at TEXT NOT NULL,
+			processed_at TEXT,
+			cancelled_at TEXT
+		)`,
+		`CREATE TABLE traspaso_almacen_lineas (
+			id TEXT PRIMARY KEY,
+			traspaso_almacen_id TEXT NOT NULL REFERENCES traspasos_almacen(id) ON DELETE CASCADE,
+			producto_id TEXT NOT NULL,
+			cantidad REAL NOT NULL CHECK (cantidad > 0)
+		)`,
+		`CREATE TABLE stock_ledger_movements (
+			id TEXT PRIMARY KEY,
+			item_id TEXT NOT NULL,
+			warehouse_id TEXT NOT NULL,
+			quantity REAL NOT NULL,
+			movement_type TEXT NOT NULL,
+			reference_document_type TEXT,
+			reference_document_id TEXT,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX idx_traspaso_almacen_lineas_transfer ON traspaso_almacen_lineas(traspaso_almacen_id)`,
+	}
+
+	for _, q := range queries {
+		if _, err = db.Exec(q); err != nil {
+			db.Close()
+			t.Fatalf("failed to run query %q: %v", q, err)
 		}
-		if fetched[0].ID != entry.ID {
-			t.Errorf("expected entry ID %s, got %s", entry.ID, fetched[0].ID)
+	}
+
+	cleanup := func() { db.Close() }
+	return db, cleanup
+}
+
+func TestSQLTransferRepository_Save_GetByID(t *testing.T) {
+	db, cleanup := setupTransferRepoTestDB(t)
+	defer cleanup()
+
+	repo := adapters.NewSQLTransferRepository(db, true)
+	ctx := context.Background()
+
+	t.Run("round-trip create + fetch with lines", func(t *testing.T) {
+		now := time.Now()
+		transfer := &domain.TraspasoAlmacen{
+			ID:        uuid.New(),
+			EmpresaID: uuid.New(),
+			OrigenID:  uuid.New(),
+			DestinoID: uuid.New(),
+			Estado:    domain.TraspasoBorrador,
+			CreatedAt: now,
 		}
-		if fetched[0].Quantity != 42.0 {
-			t.Errorf("expected quantity 42, got %f", fetched[0].Quantity)
+
+		err := repo.Save(ctx, transfer)
+		if err != nil {
+			t.Fatalf("failed to save transfer: %v", err)
+		}
+
+		// Add a line
+		line := &domain.TraspasoAlmacenLinea{
+			ID:                uuid.New(),
+			TraspasoAlmacenID: transfer.ID,
+			ProductoID:        uuid.New(),
+			Cantidad:          10.0,
+		}
+		err = repo.AddLine(ctx, line)
+		if err != nil {
+			t.Fatalf("failed to add line: %v", err)
+		}
+
+		// Fetch by ID
+		fetched, err := repo.GetByID(ctx, transfer.ID)
+		if err != nil {
+			t.Fatalf("failed to get transfer: %v", err)
+		}
+		if fetched.ID != transfer.ID {
+			t.Errorf("expected ID %s, got %s", transfer.ID, fetched.ID)
+		}
+		if fetched.Estado != domain.TraspasoBorrador {
+			t.Errorf("expected estado Borrador, got %s", fetched.Estado)
+		}
+		if len(fetched.Lineas) != 1 {
+			t.Fatalf("expected 1 linea, got %d", len(fetched.Lineas))
+		}
+		if fetched.Lineas[0].ProductoID != line.ProductoID {
+			t.Errorf("expected producto %s, got %s", line.ProductoID, fetched.Lineas[0].ProductoID)
+		}
+	})
+
+	t.Run("GetByID returns ErrTransferNotFound for missing ID", func(t *testing.T) {
+		_, err := repo.GetByID(ctx, uuid.New())
+		if !errors.Is(err, domain.ErrTransferNotFound) {
+			t.Errorf("expected ErrTransferNotFound, got %v", err)
+		}
+	})
+}
+
+func TestSQLTransferRepository_ProcessTransfer_Atomicity(t *testing.T) {
+	db, cleanup := setupTransferRepoTestDB(t)
+	defer cleanup()
+
+	repo := adapters.NewSQLTransferRepository(db, true)
+	ctx := context.Background()
+	now := time.Now()
+
+	t.Run("process transfer atomically updates estado and inserts ledger entries", func(t *testing.T) {
+		transfer := &domain.TraspasoAlmacen{
+			ID:        uuid.New(),
+			EmpresaID: uuid.New(),
+			OrigenID:  uuid.New(),
+			DestinoID: uuid.New(),
+			Estado:    domain.TraspasoBorrador,
+			CreatedAt: now,
+		}
+		if err := repo.Save(ctx, transfer); err != nil {
+			t.Fatalf("failed to save: %v", err)
+		}
+
+		line := &domain.TraspasoAlmacenLinea{
+			ID:                uuid.New(),
+			TraspasoAlmacenID: transfer.ID,
+			ProductoID:        uuid.New(),
+			Cantidad:          10.0,
+		}
+		if err := repo.AddLine(ctx, line); err != nil {
+			t.Fatalf("failed to add line: %v", err)
+		}
+
+		refDocType := "TRANSFER"
+		processedAt := now.Add(1 * time.Minute)
+		transfer.ProcessedAt = &processedAt
+		transfer.Estado = domain.TraspasoProcesado
+
+		entries := []*domain.StockLedgerEntry{
+			{
+				ID:                    uuid.New(),
+				ItemID:                line.ProductoID,
+				WarehouseID:           transfer.OrigenID,
+				Quantity:              -10.0,
+				MovementType:          domain.MovementTypeTransfer,
+				ReferenceDocumentType: &refDocType,
+				ReferenceDocumentID:   &transfer.ID,
+				CreatedAt:             now,
+			},
+			{
+				ID:                    uuid.New(),
+				ItemID:                line.ProductoID,
+				WarehouseID:           transfer.DestinoID,
+				Quantity:              10.0,
+				MovementType:          domain.MovementTypeTransfer,
+				ReferenceDocumentType: &refDocType,
+				ReferenceDocumentID:   &transfer.ID,
+				CreatedAt:             now,
+			},
+		}
+
+		err := repo.ProcessTransfer(ctx, transfer, entries)
+		if err != nil {
+			t.Fatalf("failed to process transfer: %v", err)
+		}
+
+		// Verify estado changed
+		fetched, err := repo.GetByID(ctx, transfer.ID)
+		if err != nil {
+			t.Fatalf("failed to get transfer: %v", err)
+		}
+		if fetched.Estado != domain.TraspasoProcesado {
+			t.Errorf("expected estado Procesado, got %s", fetched.Estado)
+		}
+		if fetched.ProcessedAt == nil {
+			t.Fatal("expected ProcessedAt to be set")
+		}
+
+		// Verify ledger entries
+		ledgerRepo := adapters.NewSQLStockLedgerRepository(db, true)
+		origenMovements, err := ledgerRepo.GetMovements(ctx, line.ProductoID, transfer.OrigenID)
+		if err != nil {
+			t.Fatalf("failed to get origen movements: %v", err)
+		}
+		if len(origenMovements) != 1 {
+			t.Fatalf("expected 1 movimiento at origen, got %d", len(origenMovements))
+		}
+		if origenMovements[0].Quantity != -10.0 {
+			t.Errorf("expected qty -10.0 at origen, got %f", origenMovements[0].Quantity)
+		}
+		if origenMovements[0].MovementType != domain.MovementTypeTransfer {
+			t.Errorf("expected movement type TRANSFER at origen, got %s", origenMovements[0].MovementType)
+		}
+
+		destinoMovements, err := ledgerRepo.GetMovements(ctx, line.ProductoID, transfer.DestinoID)
+		if err != nil {
+			t.Fatalf("failed to get destino movements: %v", err)
+		}
+		if len(destinoMovements) != 1 {
+			t.Fatalf("expected 1 movimiento at destino, got %d", len(destinoMovements))
+		}
+		if destinoMovements[0].Quantity != 10.0 {
+			t.Errorf("expected qty 10.0 at destino, got %f", destinoMovements[0].Quantity)
+		}
+		if destinoMovements[0].MovementType != domain.MovementTypeTransfer {
+			t.Errorf("expected movement type TRANSFER at destino, got %s", destinoMovements[0].MovementType)
+		}
+	})
+
+	t.Run("second ProcessTransfer call returns ErrTransferAlreadyProcessed", func(t *testing.T) {
+		transfer := &domain.TraspasoAlmacen{
+			ID:        uuid.New(),
+			EmpresaID: uuid.New(),
+			OrigenID:  uuid.New(),
+			DestinoID: uuid.New(),
+			Estado:    domain.TraspasoBorrador,
+			CreatedAt: now,
+		}
+		if err := repo.Save(ctx, transfer); err != nil {
+			t.Fatalf("failed to save: %v", err)
+		}
+
+		line := &domain.TraspasoAlmacenLinea{
+			ID:                uuid.New(),
+			TraspasoAlmacenID: transfer.ID,
+			ProductoID:        uuid.New(),
+			Cantidad:          5.0,
+		}
+		if err := repo.AddLine(ctx, line); err != nil {
+			t.Fatalf("failed to add line: %v", err)
+		}
+
+		refDocType := "TRANSFER"
+		processedAt := now.Add(1 * time.Minute)
+		transfer.ProcessedAt = &processedAt
+		transfer.Estado = domain.TraspasoProcesado
+
+		entries := []*domain.StockLedgerEntry{
+			{
+				ID:                    uuid.New(),
+				ItemID:                line.ProductoID,
+				WarehouseID:           transfer.OrigenID,
+				Quantity:              -5.0,
+				MovementType:          domain.MovementTypeTransfer,
+				ReferenceDocumentType: &refDocType,
+				ReferenceDocumentID:   &transfer.ID,
+				CreatedAt:             now,
+			},
+			{
+				ID:                    uuid.New(),
+				ItemID:                line.ProductoID,
+				WarehouseID:           transfer.DestinoID,
+				Quantity:              5.0,
+				MovementType:          domain.MovementTypeTransfer,
+				ReferenceDocumentType: &refDocType,
+				ReferenceDocumentID:   &transfer.ID,
+				CreatedAt:             now,
+			},
+		}
+
+		// First call succeeds
+		err := repo.ProcessTransfer(ctx, transfer, entries)
+		if err != nil {
+			t.Fatalf("first process should succeed: %v", err)
+		}
+
+		// Second call must fail
+		err = repo.ProcessTransfer(ctx, transfer, entries)
+		if !errors.Is(err, domain.ErrTransferAlreadyProcessed) {
+			t.Errorf("expected ErrTransferAlreadyProcessed, got %v", err)
+		}
+	})
+}
+
+func TestSQLTransferRepository_List_Filters(t *testing.T) {
+	db, cleanup := setupTransferRepoTestDB(t)
+	defer cleanup()
+
+	repo := adapters.NewSQLTransferRepository(db, true)
+	ctx := context.Background()
+	now := time.Now()
+
+	empresaID := uuid.New()
+	origenA := uuid.New()
+	destinoB := uuid.New()
+	destinoC := uuid.New()
+
+	// Create a Borrador transfer
+	borradorTransfer := &domain.TraspasoAlmacen{
+		ID:        uuid.New(),
+		EmpresaID: empresaID,
+		OrigenID:  origenA,
+		DestinoID: destinoB,
+		Estado:    domain.TraspasoBorrador,
+		CreatedAt: now,
+	}
+	if err := repo.Save(ctx, borradorTransfer); err != nil {
+		t.Fatalf("failed to save borrador: %v", err)
+	}
+
+	// Create a Procesado transfer
+	processedAt := now.Add(1 * time.Hour)
+	procesadoTransfer := &domain.TraspasoAlmacen{
+		ID:          uuid.New(),
+		EmpresaID:   empresaID,
+		OrigenID:    origenA,
+		DestinoID:   destinoC,
+		Estado:      domain.TraspasoProcesado,
+		CreatedAt:   now.Add(30 * time.Minute),
+		ProcessedAt: &processedAt,
+	}
+	if err := repo.Save(ctx, procesadoTransfer); err != nil {
+		t.Fatalf("failed to save procesado: %v", err)
+	}
+
+	t.Run("filter by estado = Borrador", func(t *testing.T) {
+		estado := domain.TraspasoBorrador
+		results, total, err := repo.List(ctx, domain.TransferFilter{Estado: &estado})
+		if err != nil {
+			t.Fatalf("failed to list: %v", err)
+		}
+		if total != 1 {
+			t.Errorf("expected total 1, got %d", total)
+		}
+		if len(results) != 1 || results[0].ID != borradorTransfer.ID {
+			t.Errorf("expected borrador transfer, got %d results", len(results))
+		}
+		if results[0].Estado != domain.TraspasoBorrador {
+			t.Errorf("expected estado Borrador, got %s", results[0].Estado)
+		}
+	})
+
+	t.Run("filter by estado = Procesado", func(t *testing.T) {
+		estado := domain.TraspasoProcesado
+		results, total, err := repo.List(ctx, domain.TransferFilter{Estado: &estado})
+		if err != nil {
+			t.Fatalf("failed to list: %v", err)
+		}
+		if total != 1 {
+			t.Errorf("expected total 1, got %d", total)
+		}
+		if len(results) != 1 || results[0].ID != procesadoTransfer.ID {
+			t.Errorf("expected procesado transfer, got %d results", len(results))
+		}
+	})
+
+	t.Run("filter by destino_id", func(t *testing.T) {
+		results, total, err := repo.List(ctx, domain.TransferFilter{DestinoID: &destinoB})
+		if err != nil {
+			t.Fatalf("failed to list: %v", err)
+		}
+		if total != 1 {
+			t.Errorf("expected total 1 for destinoB, got %d", total)
+		}
+		if len(results) != 1 || results[0].ID != borradorTransfer.ID {
+			t.Errorf("expected borrador transfer for destinoB, got %d results", len(results))
+		}
+	})
+
+	t.Run("filter by origen_id", func(t *testing.T) {
+		results, total, err := repo.List(ctx, domain.TransferFilter{OrigenID: &origenA})
+		if err != nil {
+			t.Fatalf("failed to list: %v", err)
+		}
+		if total != 2 {
+			t.Errorf("expected total 2 for origenA, got %d", total)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results, got %d", len(results))
+		}
+	})
+
+	t.Run("filter by date range", func(t *testing.T) {
+		desde := now.Add(-1 * time.Hour)
+		hasta := now.Add(15 * time.Minute)
+		results, total, err := repo.List(ctx, domain.TransferFilter{Desde: &desde, Hasta: &hasta})
+		if err != nil {
+			t.Fatalf("failed to list: %v", err)
+		}
+		if total != 1 {
+			t.Errorf("expected total 1 in date range, got %d", total)
+		}
+		if len(results) != 1 || results[0].ID != borradorTransfer.ID {
+			t.Errorf("expected only borrador in range, got %d results", len(results))
+		}
+	})
+}
+
+func TestSQLTransferRepository_List_Pagination(t *testing.T) {
+	db, cleanup := setupTransferRepoTestDB(t)
+	defer cleanup()
+
+	repo := adapters.NewSQLTransferRepository(db, true)
+	ctx := context.Background()
+	now := time.Now()
+
+	empresaID := uuid.New()
+	origenID := uuid.New()
+	destinoID := uuid.New()
+
+	// Create 25 transfers
+	const totalTransfers = 25
+	for i := 0; i < totalTransfers; i++ {
+		transfer := &domain.TraspasoAlmacen{
+			ID:        uuid.New(),
+			EmpresaID: empresaID,
+			OrigenID:  origenID,
+			DestinoID: destinoID,
+			Estado:    domain.TraspasoBorrador,
+			CreatedAt: now.Add(time.Duration(i) * time.Second),
+		}
+		if err := repo.Save(ctx, transfer); err != nil {
+			t.Fatalf("failed to save transfer %d: %v", i, err)
+		}
+	}
+
+	t.Run("page 1 with page_size 10 returns first 10 and total 25", func(t *testing.T) {
+		results, total, err := repo.List(ctx, domain.TransferFilter{Page: 1, PageSize: 10})
+		if err != nil {
+			t.Fatalf("failed to list: %v", err)
+		}
+		if total != totalTransfers {
+			t.Errorf("expected total %d, got %d", totalTransfers, total)
+		}
+		if len(results) != 10 {
+			t.Errorf("expected 10 results on page 1, got %d", len(results))
+		}
+	})
+
+	t.Run("page 3 with page_size 10 returns last 5", func(t *testing.T) {
+		results, total, err := repo.List(ctx, domain.TransferFilter{Page: 3, PageSize: 10})
+		if err != nil {
+			t.Fatalf("failed to list page 3: %v", err)
+		}
+		if total != totalTransfers {
+			t.Errorf("expected total %d, got %d", totalTransfers, total)
+		}
+		if len(results) != 5 {
+			t.Errorf("expected 5 results on page 3, got %d", len(results))
+		}
+	})
+
+	t.Run("page_size is capped at 100", func(t *testing.T) {
+		results, total, err := repo.List(ctx, domain.TransferFilter{Page: 1, PageSize: 200})
+		if err != nil {
+			t.Fatalf("failed to list: %v", err)
+		}
+		if total != totalTransfers {
+			t.Errorf("expected total %d, got %d", totalTransfers, total)
+		}
+		// With page_size capped at 100, we should get all 25
+		if len(results) != totalTransfers {
+			t.Errorf("expected %d results, got %d", totalTransfers, len(results))
 		}
 	})
 }

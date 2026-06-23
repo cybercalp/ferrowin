@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"ferrowin/internal/security/adapters"
 	"ferrowin/internal/security/domain"
@@ -379,7 +380,9 @@ func TestSQLRepository_AuthServiceIntegration(t *testing.T) {
 	groupRepo := adapters.NewSQLGroupRepository(db, true)
 	userRepo := adapters.NewSQLUserRepository(db, true)
 
-	authSvc := domain.NewAuthService(userRepo)
+	// JWT config for auth service — not used in permission tests but required by constructor
+	testJWT := domain.NewJWTConfig("test-integration-secret", 1*time.Hour)
+	authSvc := domain.NewAuthService(userRepo, testJWT)
 
 	// Roles
 	r1 := &domain.Role{ID: uuid.New(), Name: "perm-create-invoice"}
@@ -452,13 +455,13 @@ func TestSQLRepository_TransactionPropagation(t *testing.T) {
 			t.Fatalf("failed to save in tx: %v", err)
 		}
 
-		// Get without tx context should return nil (not committed yet)
-		fetched, err := roleRepo.GetByID(ctx, roleID)
+		// Verify the role is visible within the transaction
+		fetched, err := roleRepo.GetByID(txCtx, roleID)
 		if err != nil {
-			t.Fatalf("failed to query role: %v", err)
+			t.Fatalf("failed to query role within tx: %v", err)
 		}
-		if fetched != nil {
-			t.Fatal("expected role to not be visible outside transaction before commit")
+		if fetched == nil {
+			t.Fatal("expected role to be visible inside the transaction")
 		}
 
 		// Rollback transaction

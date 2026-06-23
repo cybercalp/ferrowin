@@ -3,6 +3,7 @@ use tauri::State;
 use std::time::Duration;
 use rusqlite::params;
 
+pub mod auth;
 pub mod db;
 pub mod sync;
 pub mod signature;
@@ -203,14 +204,15 @@ fn save_offline_closure(
 #[tauri::command]
 async fn get_stock(
     item_id: String,
+    auth: State<'_, crate::auth::AuthState>,
     state: State<'_, DbState>,
 ) -> Result<Option<f64>, String> {
-    let client = reqwest::Client::builder()
+    let health_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-    let online = client
+    let online = health_client
         .head(format!("{}/api/v1/health", state.backend_url))
         .send()
         .await
@@ -218,8 +220,10 @@ async fn get_stock(
         .unwrap_or(false);
 
     if online {
+        let authorized_client = crate::auth::get_authorized_client(&auth)
+            .map_err(|e| format!("Failed to build authorized client: {}", e))?;
         let url = format!("{}/api/v1/inventory/stock/{}", state.backend_url, item_id);
-        let res = client.get(&url).send().await;
+        let res = authorized_client.get(&url).send().await;
         match res {
             Ok(r) if r.status().is_success() => {
                 #[derive(serde::Deserialize)]
@@ -255,8 +259,9 @@ async fn get_stock(
 }
 
 #[tauri::command]
-async fn sync_catalog(state: State<'_, DbState>) -> Result<(), String> {
-    catalog_sync::sync_catalog_delta(&state.db_path, &state.backend_url).await
+async fn sync_catalog(auth: State<'_, crate::auth::AuthState>, state: State<'_, DbState>) -> Result<(), String> {
+    let token = crate::auth::get_token(&auth);
+    catalog_sync::sync_catalog_delta(&state.db_path, &state.backend_url, token).await
 }
 
 #[tauri::command]
@@ -576,6 +581,10 @@ pub fn run() {
             registrar_cobro_pago,
             get_terminal_health,
             generate_receipt_pdf,
+            auth::login,
+            auth::set_auth_state,
+            auth::clear_auth,
+            auth::get_auth_token,
         ])
 
         .setup(|app| {
@@ -609,6 +618,9 @@ pub fn run() {
                 backend_url,
             };
             app.manage(db_state);
+
+            // Manage AuthState (initially empty — restored from localStorage by frontend)
+            app.manage(auth::AuthState::new());
 
             Ok(())
         })

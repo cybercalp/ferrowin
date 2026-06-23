@@ -10,14 +10,21 @@ import (
 )
 
 type mockSalesRepository struct {
-	saveQuoteFunc func(ctx context.Context, q *Quote) error
-	getQuoteFunc  func(ctx context.Context, id uuid.UUID) (*Quote, error)
-	saveOrderFunc func(ctx context.Context, o *Order) error
-	getOrderFunc  func(ctx context.Context, id uuid.UUID) (*Order, error)
-	saveDNFunc    func(ctx context.Context, dn *DeliveryNote) error
-	getDNFunc     func(ctx context.Context, id uuid.UUID) (*DeliveryNote, error)
-	saveInvFunc   func(ctx context.Context, inv *Invoice) error
-	getInvFunc    func(ctx context.Context, id uuid.UUID) (*Invoice, error)
+	saveQuoteFunc       func(ctx context.Context, q *Quote) error
+	getQuoteFunc        func(ctx context.Context, id uuid.UUID) (*Quote, error)
+	saveOrderFunc       func(ctx context.Context, o *Order) error
+	getOrderFunc        func(ctx context.Context, id uuid.UUID) (*Order, error)
+	saveDNFunc          func(ctx context.Context, dn *DeliveryNote) error
+	getDNFunc           func(ctx context.Context, id uuid.UUID) (*DeliveryNote, error)
+	saveInvFunc         func(ctx context.Context, inv *Invoice) error
+	getInvFunc          func(ctx context.Context, id uuid.UUID) (*Invoice, error)
+	updateQuoteFunc     func(ctx context.Context, input UpdateQuoteInput) error
+	updateOrderFunc     func(ctx context.Context, input UpdateOrderInput) error
+	updateDNFunc        func(ctx context.Context, input UpdateDeliveryNoteInput) error
+	cancelQuoteFunc     func(ctx context.Context, id uuid.UUID) error
+	cancelOrderFunc     func(ctx context.Context, id uuid.UUID) error
+	cancelDNFunc        func(ctx context.Context, id uuid.UUID) error
+	cancelInvoiceFunc   func(ctx context.Context, id uuid.UUID) error
 }
 
 func (m *mockSalesRepository) SaveQuote(ctx context.Context, q *Quote) error {
@@ -51,6 +58,57 @@ func (m *mockSalesRepository) SaveInvoice(ctx context.Context, inv *Invoice) err
 func (m *mockSalesRepository) GetInvoice(ctx context.Context, id uuid.UUID) (*Invoice, error) {
 	if m.getInvFunc != nil { return m.getInvFunc(ctx, id) }
 	return nil, nil
+}
+
+func (m *mockSalesRepository) ListQuotes(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Quote, int, error) {
+	return nil, 0, nil
+}
+
+func (m *mockSalesRepository) ListOrders(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Order, int, error) {
+	return nil, 0, nil
+}
+
+func (m *mockSalesRepository) ListDeliveryNotes(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*DeliveryNote, int, error) {
+	return nil, 0, nil
+}
+
+func (m *mockSalesRepository) ListInvoices(ctx context.Context, empresaID uuid.UUID, filter DocumentFilter) ([]*Invoice, int, error) {
+	return nil, 0, nil
+}
+
+func (m *mockSalesRepository) UpdateQuote(ctx context.Context, input UpdateQuoteInput) error {
+	if m.updateQuoteFunc != nil { return m.updateQuoteFunc(ctx, input) }
+	return nil
+}
+
+func (m *mockSalesRepository) UpdateOrder(ctx context.Context, input UpdateOrderInput) error {
+	if m.updateOrderFunc != nil { return m.updateOrderFunc(ctx, input) }
+	return nil
+}
+
+func (m *mockSalesRepository) UpdateDeliveryNote(ctx context.Context, input UpdateDeliveryNoteInput) error {
+	if m.updateDNFunc != nil { return m.updateDNFunc(ctx, input) }
+	return nil
+}
+
+func (m *mockSalesRepository) CancelQuote(ctx context.Context, id uuid.UUID) error {
+	if m.cancelQuoteFunc != nil { return m.cancelQuoteFunc(ctx, id) }
+	return nil
+}
+
+func (m *mockSalesRepository) CancelOrder(ctx context.Context, id uuid.UUID) error {
+	if m.cancelOrderFunc != nil { return m.cancelOrderFunc(ctx, id) }
+	return nil
+}
+
+func (m *mockSalesRepository) CancelDeliveryNote(ctx context.Context, id uuid.UUID) error {
+	if m.cancelDNFunc != nil { return m.cancelDNFunc(ctx, id) }
+	return nil
+}
+
+func (m *mockSalesRepository) CancelInvoice(ctx context.Context, id uuid.UUID) error {
+	if m.cancelInvoiceFunc != nil { return m.cancelInvoiceFunc(ctx, id) }
+	return nil
 }
 
 type mockSecurityService struct {

@@ -47,6 +47,57 @@ func (r *SQLTerminalRepository) GetByID(ctx context.Context, id uuid.UUID) (*dom
 	return &t, nil
 }
 
+// List returns all terminals ordered by name.
+func (r *SQLTerminalRepository) List(ctx context.Context) ([]domain.Terminal, error) {
+	query := "SELECT id, name, is_active FROM terminals ORDER BY name"
+	var rows *sql.Rows
+	var err error
+	rows, err = r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var terminals []domain.Terminal
+	for rows.Next() {
+		var t domain.Terminal
+		var idStr string
+		if err := rows.Scan(&idStr, &t.Name, &t.IsActive); err != nil {
+			return nil, err
+		}
+		parsedID, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, err
+		}
+		t.ID = parsedID
+		terminals = append(terminals, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return terminals, nil
+}
+
+// Delete hard-deletes a terminal by ID.
+func (r *SQLTerminalRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	query := "DELETE FROM terminals WHERE id = $1"
+	if r.isSQLite {
+		query = "DELETE FROM terminals WHERE id = ?"
+	}
+	result, err := r.db.ExecContext(ctx, query, id.String())
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("terminal not found")
+	}
+	return nil
+}
+
 // Save inserts or updates a terminal.
 func (r *SQLTerminalRepository) Save(ctx context.Context, t *domain.Terminal) error {
 	var query string
@@ -129,6 +180,60 @@ func (r *SQLInvoicingSeriesRepository) GetByTerminalID(ctx context.Context, term
 	s.ID = parsedID
 	s.TerminalID = parsedTerminalID
 	return &s, nil
+}
+
+// List returns all invoicing series ordered by prefix.
+func (r *SQLInvoicingSeriesRepository) List(ctx context.Context) ([]domain.InvoicingSeries, error) {
+	query := "SELECT id, terminal_id, prefix, next_sequence FROM invoicing_series ORDER BY prefix"
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var series []domain.InvoicingSeries
+	for rows.Next() {
+		var s domain.InvoicingSeries
+		var idStr, terminalIDStr string
+		if err := rows.Scan(&idStr, &terminalIDStr, &s.Prefix, &s.NextSequence); err != nil {
+			return nil, err
+		}
+		parsedID, err := uuid.Parse(idStr)
+		if err != nil {
+			return nil, err
+		}
+		parsedTerminalID, err := uuid.Parse(terminalIDStr)
+		if err != nil {
+			return nil, err
+		}
+		s.ID = parsedID
+		s.TerminalID = parsedTerminalID
+		series = append(series, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return series, nil
+}
+
+// Delete hard-deletes an invoicing series by ID.
+func (r *SQLInvoicingSeriesRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	query := "DELETE FROM invoicing_series WHERE id = $1"
+	if r.isSQLite {
+		query = "DELETE FROM invoicing_series WHERE id = ?"
+	}
+	result, err := r.db.ExecContext(ctx, query, id.String())
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("invoicing series not found")
+	}
+	return nil
 }
 
 // Save inserts or updates an invoicing series.

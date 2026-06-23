@@ -11,29 +11,82 @@ import (
 )
 
 var (
-	ErrCompanyNotFound       = errors.New("company not found")
-	ErrWarehouseNotFound     = errors.New("warehouse not found")
-	ErrSupplierNotFound      = errors.New("supplier not found")
-	ErrPurchaseOrderNotFound = errors.New("purchase order not found")
-	ErrPurchaseReceiptNotFound = errors.New("purchase receipt not found")
-	ErrTenantMismatch        = errors.New("tenant company mismatch")
-	ErrInvalidStatus         = errors.New("invalid status transition")
+	ErrCompanyNotFound          = errors.New("company not found")
+	ErrWarehouseNotFound        = errors.New("warehouse not found")
+	ErrSupplierNotFound         = errors.New("supplier not found")
+	ErrPurchaseOrderNotFound    = errors.New("purchase order not found")
+	ErrPurchaseReceiptNotFound  = errors.New("purchase receipt not found")
+	ErrTenantMismatch           = errors.New("tenant company mismatch")
+	ErrInvalidStatus            = errors.New("invalid status transition")
 )
+
+// PurchaseOrderFilter holds optional filter fields for listing purchase orders.
+type PurchaseOrderFilter struct {
+	EmpresaID   *uuid.UUID
+	Estado      *string
+	ProveedorID *uuid.UUID
+	Desde       *time.Time
+	Hasta       *time.Time
+	Page        int
+	PageSize    int
+}
+
+// PurchaseReceiptFilter holds optional filter fields for listing purchase receipts.
+type PurchaseReceiptFilter struct {
+	EmpresaID *uuid.UUID
+	Estado    *string
+	Desde     *time.Time
+	Hasta     *time.Time
+	Page      int
+	PageSize  int
+}
+
+// Update input types for partial updates (nil fields = don't update)
+type UpdateCompanyInput struct {
+	ID          uuid.UUID
+	RazonSocial *string
+	NIF         *string
+}
+
+type UpdateWarehouseInput struct {
+	ID     uuid.UUID
+	Name   *string
+	Active *bool
+}
+
+type UpdateSupplierInput struct {
+	ID          uuid.UUID
+	RazonSocial *string
+	CIF         *string
+	Email       *string
+	Telefono    *string
+	Activo      *bool
+}
 
 type PurchaseRepository interface {
 	SaveCompany(ctx context.Context, c *Empresa) error
+	GetCompanies(ctx context.Context) ([]*Empresa, error)
+	UpdateCompany(ctx context.Context, input UpdateCompanyInput) error
+
 	SaveWarehouse(ctx context.Context, w *Warehouse) error
 	GetWarehouse(ctx context.Context, id uuid.UUID) (*Warehouse, error)
-	
+	GetAllWarehouses(ctx context.Context, empresaID uuid.UUID) ([]*Warehouse, error)
+	UpdateWarehouse(ctx context.Context, input UpdateWarehouseInput) error
+
 	SaveSupplier(ctx context.Context, s *Proveedor) error
 	GetSuppliers(ctx context.Context, empresaID uuid.UUID) ([]*Proveedor, error)
 	GetSupplier(ctx context.Context, id uuid.UUID) (*Proveedor, error)
-	
+	UpdateSupplier(ctx context.Context, input UpdateSupplierInput) error
+
 	SavePurchaseOrder(ctx context.Context, o *PedidoCompra) error
 	GetPurchaseOrder(ctx context.Context, id uuid.UUID) (*PedidoCompra, error)
-	
+	ListPurchaseOrders(ctx context.Context, empresaID uuid.UUID, filter PurchaseOrderFilter) ([]*PedidoCompra, int, error)
+	CancelPurchaseOrder(ctx context.Context, id uuid.UUID) error
+
 	SavePurchaseReceipt(ctx context.Context, r *RecepcionCompra) error
 	GetPurchaseReceipt(ctx context.Context, id uuid.UUID) (*RecepcionCompra, error)
+	ListPurchaseReceipts(ctx context.Context, empresaID uuid.UUID, filter PurchaseReceiptFilter) ([]*RecepcionCompra, int, error)
+	CancelPurchaseReceipt(ctx context.Context, id uuid.UUID) error
 }
 
 type PurchaseService struct {
@@ -75,6 +128,15 @@ func (s *PurchaseService) CreateWarehouse(ctx context.Context, empresaID uuid.UU
 	return w, nil
 }
 
+// Company & Warehouse
+func (s *PurchaseService) GetCompanies(ctx context.Context) ([]*Empresa, error) {
+	return s.repo.GetCompanies(ctx)
+}
+
+func (s *PurchaseService) GetAllWarehouses(ctx context.Context, empresaID uuid.UUID) ([]*Warehouse, error) {
+	return s.repo.GetAllWarehouses(ctx, empresaID)
+}
+
 // Supplier
 func (s *PurchaseService) CreateSupplier(ctx context.Context, empresaID uuid.UUID, razonSocial, cif, email, telefono, direccion string) (*Proveedor, error) {
 	prov := &Proveedor{
@@ -95,6 +157,51 @@ func (s *PurchaseService) CreateSupplier(ctx context.Context, empresaID uuid.UUI
 
 func (s *PurchaseService) GetSuppliers(ctx context.Context, empresaID uuid.UUID) ([]*Proveedor, error) {
 	return s.repo.GetSuppliers(ctx, empresaID)
+}
+
+// Update methods delegate to repository.
+func (s *PurchaseService) UpdateCompany(ctx context.Context, input UpdateCompanyInput) error {
+	return s.repo.UpdateCompany(ctx, input)
+}
+func (s *PurchaseService) UpdateWarehouse(ctx context.Context, input UpdateWarehouseInput) error {
+	return s.repo.UpdateWarehouse(ctx, input)
+}
+func (s *PurchaseService) UpdateSupplier(ctx context.Context, input UpdateSupplierInput) error {
+	return s.repo.UpdateSupplier(ctx, input)
+}
+
+func (s *PurchaseService) CancelPurchaseOrder(ctx context.Context, empresaID, orderID uuid.UUID) error {
+	po, err := s.repo.GetPurchaseOrder(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if po.EmpresaID != empresaID {
+		return ErrTenantMismatch
+	}
+	if po.Estado == "Cancelado" {
+		return fmt.Errorf("%w: purchase order is already cancelled", ErrInvalidStatus)
+	}
+	if po.Estado == "Recibido" {
+		return fmt.Errorf("%w: cannot cancel a received purchase order", ErrInvalidStatus)
+	}
+	return s.repo.CancelPurchaseOrder(ctx, orderID)
+}
+
+func (s *PurchaseService) CancelPurchaseReceipt(ctx context.Context, empresaID, receiptID uuid.UUID) error {
+	rc, err := s.repo.GetPurchaseReceipt(ctx, receiptID)
+	if err != nil {
+		return err
+	}
+	if rc.EmpresaID != empresaID {
+		return ErrTenantMismatch
+	}
+	if rc.Estado == "Cancelado" {
+		return fmt.Errorf("%w: purchase receipt is already cancelled", ErrInvalidStatus)
+	}
+	if rc.Estado == "Procesado" {
+		return fmt.Errorf("%w: cannot cancel a processed purchase receipt", ErrInvalidStatus)
+	}
+	return s.repo.CancelPurchaseReceipt(ctx, receiptID)
 }
 
 // Purchase Order
@@ -139,6 +246,14 @@ func (s *PurchaseService) CreatePurchaseOrder(ctx context.Context, empresaID, pr
 	return po, nil
 }
 
+func (s *PurchaseService) GetPurchaseOrder(ctx context.Context, id uuid.UUID) (*PedidoCompra, error) {
+	return s.repo.GetPurchaseOrder(ctx, id)
+}
+
+func (s *PurchaseService) GetPurchaseReceipt(ctx context.Context, id uuid.UUID) (*RecepcionCompra, error) {
+	return s.repo.GetPurchaseReceipt(ctx, id)
+}
+
 func (s *PurchaseService) ApprovePurchaseOrder(ctx context.Context, empresaID, orderID uuid.UUID) error {
 	po, err := s.repo.GetPurchaseOrder(ctx, orderID)
 	if err != nil {
@@ -153,6 +268,16 @@ func (s *PurchaseService) ApprovePurchaseOrder(ctx context.Context, empresaID, o
 
 	po.Estado = "Aprobado"
 	return s.repo.SavePurchaseOrder(ctx, po)
+}
+
+func (s *PurchaseService) ListPurchaseOrders(ctx context.Context, empresaID uuid.UUID, filter PurchaseOrderFilter) ([]*PedidoCompra, int, error) {
+	filter.EmpresaID = &empresaID
+	return s.repo.ListPurchaseOrders(ctx, empresaID, filter)
+}
+
+func (s *PurchaseService) ListPurchaseReceipts(ctx context.Context, empresaID uuid.UUID, filter PurchaseReceiptFilter) ([]*RecepcionCompra, int, error) {
+	filter.EmpresaID = &empresaID
+	return s.repo.ListPurchaseReceipts(ctx, empresaID, filter)
 }
 
 // Purchase Receipt

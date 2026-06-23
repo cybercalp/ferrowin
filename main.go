@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	inventoryadapters "ferrowin/internal/inventory/adapters"
@@ -21,6 +22,10 @@ import (
 	"ferrowin/internal/shared/idempotency"
 	syncadapters "ferrowin/internal/sync/adapters"
 
+	catalogadapters "ferrowin/internal/catalog/adapters"
+	catalogdomain "ferrowin/internal/catalog/domain"
+
+	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
@@ -78,49 +83,130 @@ func main() {
 	purchaseRepo := purchasesadapters.NewSQLPurchaseRepository(db, isSQLite)
 	purchaseService := purchasesdomain.NewPurchaseService(purchaseRepo, invService)
 
-	billingRepo := billingadapters.NewSQLInvoicingSeriesRepository(db, isSQLite)
-	billingServ := billingdomain.NewBillingService(billingRepo)
+	billingTerminalRepo := billingadapters.NewSQLTerminalRepository(db, isSQLite)
+	billingSeriesRepo := billingadapters.NewSQLInvoicingSeriesRepository(db, isSQLite)
+	billingServ := billingdomain.NewBillingService(billingSeriesRepo)
+	billingCtrl := billingadapters.NewBillingController(billingTerminalRepo, billingSeriesRepo)
 
 	secUserRepo := securityadapters.NewSQLUserRepository(db, isSQLite)
-	authService := securitydomain.NewAuthService(secUserRepo)
+	secGroupRepo := securityadapters.NewSQLGroupRepository(db, isSQLite)
+	secRoleSetRepo := securityadapters.NewSQLRoleSetRepository(db, isSQLite)
+	secRoleRepo := securityadapters.NewSQLRoleRepository(db, isSQLite)
+
+	// JWT configuration
+	jwtSecret := os.Getenv("JWT_SECRET")
+	envMode := os.Getenv("FERROWIN_ENV")
+	if jwtSecret == "" {
+		if envMode == "development" {
+			jwtSecret = "ferrowin-dev-secret-do-not-use-in-production"
+			log.Println("[auth] WARNING: Using dev JWT_SECRET. Set JWT_SECRET env var in production and FERROWIN_ENV=production.")
+		} else {
+			log.Fatal("[auth] FATAL: JWT_SECRET env var is required. Set JWT_SECRET or use FERROWIN_ENV=development for dev mode.")
+		}
+	}
+	expiryHours := 24
+	if v := os.Getenv("JWT_EXPIRY_HOURS"); v != "" {
+		if h, err := strconv.Atoi(v); err == nil && h > 0 {
+			expiryHours = h
+		}
+	}
+	jwtCfg := securitydomain.NewJWTConfig(jwtSecret, time.Duration(expiryHours)*time.Hour)
+
+	authService := securitydomain.NewAuthService(secUserRepo, jwtCfg)
 
 	salesRepo := salesadapters.NewSQLSalesRepository(db, isSQLite)
 	salesService := salesdomain.NewSalesService(salesRepo, invService, authService, billingServ)
 
 	// Initialize controllers
+	authController := securityadapters.NewAuthController(authService)
+	rbacCtrl := securityadapters.NewRBACController(secUserRepo, secGroupRepo, secRoleSetRepo, secRoleRepo)
+	authMiddleware := securityadapters.NewAuthMiddleware(jwtCfg)
 	syncController := syncadapters.NewSalesSyncController(db, isSQLite, invService, tracker)
 	catalogController := syncadapters.NewCatalogSyncController(db, isSQLite, tracker)
+
+	catalogRepo := catalogadapters.NewSQLCatalogRepository(db, isSQLite)
+	catalogSvc := catalogdomain.NewCatalogService(catalogRepo)
+	catalogCtrl := catalogadapters.NewCatalogController(catalogSvc)
+
 	purchaseController := purchasesadapters.NewPurchaseController(purchaseService)
 	salesController := salesadapters.NewSalesController(salesService)
 
 	// Set up HTTP routing
 	mux := http.NewServeMux()
+	// Unprotected routes
+	mux.Handle("POST /api/v1/auth/login", authController)
 	mux.Handle("/api/v1/health", syncController)
-	mux.Handle("/api/v1/sync/sales", syncController)
-	mux.Handle("/api/v1/sync/closures", syncController)
-	mux.Handle("/api/v1/sync/events", syncController)
-	mux.Handle("/api/v1/sync/voids", syncController)
-	mux.Handle("/api/v1/inventory/stock/", syncController)
-	mux.Handle("/api/v1/catalog/sync", catalogController)
-	mux.Handle("/api/v1/catalog/clients/dossier", catalogController)
-	mux.Handle("/api/v1/sync/payments", catalogController)
+	// Protected routes (require JWT auth)
+	mux.Handle("/api/v1/sync/sales", authMiddleware.Middleware(syncController))
+	mux.Handle("/api/v1/sync/closures", authMiddleware.Middleware(syncController))
+	mux.Handle("/api/v1/sync/events", authMiddleware.Middleware(syncController))
+	mux.Handle("/api/v1/sync/voids", authMiddleware.Middleware(syncController))
+	mux.Handle("/api/v1/inventory/stock/", authMiddleware.Middleware(syncController))
+	mux.Handle("/api/v1/catalog/sync", authMiddleware.Middleware(catalogController))
+	mux.Handle("/api/v1/catalog/clients/dossier", authMiddleware.Middleware(catalogController))
+	mux.Handle("/api/v1/sync/payments", authMiddleware.Middleware(catalogController))
 
-	// Purchases routing
-	mux.Handle("/api/v1/purchases/companies", purchaseController)
-	mux.Handle("/api/v1/purchases/warehouses", purchaseController)
-	mux.Handle("/api/v1/purchases/suppliers", purchaseController)
-	mux.Handle("/api/v1/purchases/orders", purchaseController)
-	mux.Handle("/api/v1/purchases/orders/approve/", purchaseController)
-	mux.Handle("/api/v1/purchases/receipts", purchaseController)
-	mux.Handle("/api/v1/purchases/receipts/process/", purchaseController)
+	// Catalog CRUD routes (protected)
+	mux.Handle("/api/v1/catalog/tipos-iva", authMiddleware.Middleware(catalogCtrl))
+	mux.Handle("/api/v1/catalog/tipos-iva/", authMiddleware.Middleware(catalogCtrl))
+	mux.Handle("/api/v1/catalog/familias", authMiddleware.Middleware(catalogCtrl))
+	mux.Handle("/api/v1/catalog/familias/", authMiddleware.Middleware(catalogCtrl))
+	mux.Handle("/api/v1/catalog/productos", authMiddleware.Middleware(catalogCtrl))
+	mux.Handle("/api/v1/catalog/productos/", authMiddleware.Middleware(catalogCtrl))
+	mux.Handle("/api/v1/catalog/clientes", authMiddleware.Middleware(catalogCtrl))
+	mux.Handle("/api/v1/catalog/clientes/", authMiddleware.Middleware(catalogCtrl))
 
-	// Sales routing
-	mux.Handle("/api/v1/sales/quotes", salesController)
-	mux.Handle("/api/v1/sales/quotes/convert", salesController)
-	mux.Handle("/api/v1/sales/orders", salesController)
-	mux.Handle("/api/v1/sales/orders/convert", salesController)
-	mux.Handle("/api/v1/sales/delivery-notes/process", salesController)
-	mux.Handle("/api/v1/sales/delivery-notes/convert", salesController)
+	// Warehouse transfers wiring
+	transferRepo := inventoryadapters.NewSQLTransferRepository(db, isSQLite)
+	whValidator := &purchaseWarehouseAdapter{purchaseRepo}
+	transferSvc := inventorydomain.NewTransferService(transferRepo, whValidator)
+	transferCtrl := inventoryadapters.NewTransferController(transferSvc)
+
+	// Purchases routing (protected)
+	mux.Handle("/api/v1/purchases/companies", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/companies/", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/warehouses", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/warehouses/", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/suppliers", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/suppliers/", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/orders", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/orders/", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/receipts", authMiddleware.Middleware(purchaseController))
+	mux.Handle("/api/v1/purchases/receipts/", authMiddleware.Middleware(purchaseController))
+
+	// Transfers routing (protected)
+	mux.Handle("/api/v1/inventory/transfers", authMiddleware.Middleware(transferCtrl))
+	mux.Handle("/api/v1/inventory/transfers/", authMiddleware.Middleware(transferCtrl))
+
+	// Sales routing (protected)
+	mux.Handle("/api/v1/sales/quotes", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/quotes/convert", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/quotes/", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/orders", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/orders/convert", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/orders/", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/delivery-notes", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/delivery-notes/process", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/delivery-notes/convert", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/delivery-notes/", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/invoices", authMiddleware.Middleware(salesController))
+	mux.Handle("/api/v1/sales/invoices/", authMiddleware.Middleware(salesController))
+
+	// Billing CRUD routes (protected)
+	mux.Handle("/api/v1/billing/terminals", authMiddleware.Middleware(billingCtrl))
+	mux.Handle("/api/v1/billing/terminals/", authMiddleware.Middleware(billingCtrl))
+	mux.Handle("/api/v1/billing/series", authMiddleware.Middleware(billingCtrl))
+	mux.Handle("/api/v1/billing/series/", authMiddleware.Middleware(billingCtrl))
+
+	// RBAC CRUD routes (protected)
+	mux.Handle("/api/v1/security/users", authMiddleware.Middleware(rbacCtrl))
+	mux.Handle("/api/v1/security/users/", authMiddleware.Middleware(rbacCtrl))
+	mux.Handle("/api/v1/security/groups", authMiddleware.Middleware(rbacCtrl))
+	mux.Handle("/api/v1/security/groups/", authMiddleware.Middleware(rbacCtrl))
+	mux.Handle("/api/v1/security/role-sets", authMiddleware.Middleware(rbacCtrl))
+	mux.Handle("/api/v1/security/role-sets/", authMiddleware.Middleware(rbacCtrl))
+	mux.Handle("/api/v1/security/roles", authMiddleware.Middleware(rbacCtrl))
+	mux.Handle("/api/v1/security/roles/", authMiddleware.Middleware(rbacCtrl))
 
 	// Wrap in a simple logger middleware
 	loggingMux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,4 +220,21 @@ func main() {
 	if err := http.ListenAndServe(port, loggingMux); err != nil {
 		log.Fatalf("[server] Server crash: %v", err)
 	}
+}
+
+// purchaseWarehouseAdapter adapts purchases.SQLPurchaseRepository.GetWarehouse
+// to inventorydomain.WarehouseValidator, avoiding circular imports.
+type purchaseWarehouseAdapter struct {
+	repo *purchasesadapters.SQLPurchaseRepository
+}
+
+func (a *purchaseWarehouseAdapter) GetWarehouse(ctx context.Context, id uuid.UUID) (*inventorydomain.WarehouseView, error) {
+	wh, err := a.repo.GetWarehouse(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &inventorydomain.WarehouseView{
+		ID:        wh.ID,
+		EmpresaID: wh.EmpresaID,
+	}, nil
 }

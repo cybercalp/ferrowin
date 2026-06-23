@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { usePOS } from "./PosContext";
+import { useAuth } from "../context/AuthContext";
 import { BarcodeInput } from "./BarcodeInput";
 import { CustomerSelector } from "./CustomerSelector";
 import { FamilyNavBar } from "./FamilyNavBar";
@@ -31,6 +32,7 @@ function loadRpw(): number {
 
 export function POSMainLayout() {
   const { state, dispatch } = usePOS();
+  const { logout, user } = useAuth();
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(loadRpw);
 
   // Save to localStorage only when the user finishes dragging
@@ -167,6 +169,18 @@ export function POSMainLayout() {
           >
             <span className="header-btn-icon header-icon-settings" />
             <span className="header-btn-label">Ajustes</span>
+          </button>
+          <div className="pos-header-separator" />
+          <span className="pos-header-user">
+            {user?.username || ""}
+          </span>
+          <button
+            className="pos-header-btn pos-header-btn-logout"
+            onClick={logout}
+            title="Cerrar sesión"
+          >
+            <span className="header-btn-icon header-icon-logout" />
+            <span className="header-btn-label">Salir</span>
           </button>
         </div>
       </header>
