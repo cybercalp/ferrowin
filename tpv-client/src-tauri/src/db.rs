@@ -120,6 +120,7 @@ pub struct TerminalHealth {
     pub db_size_bytes: i64,
     pub pending_sales_count: i64,
     pub pending_closures_count: i64,
+    #[serde(rename = "online")]
     pub online_status: bool,
     pub app_version: String,
 }

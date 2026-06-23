@@ -107,6 +107,7 @@ pub fn start_sync_loop(
 
             // Update shared online flag for get_terminal_health.
             online_flag.store(online, Ordering::Relaxed);
+            eprintln!("[sync] health check: online={}", online);
 
             // Count pending records for the status event.
             let pending_count = count_pending(&db_path);

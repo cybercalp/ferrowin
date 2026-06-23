@@ -382,12 +382,26 @@ fn get_terminal_health(state: State<'_, DbState>) -> Result<db::TerminalHealth, 
         .map(|c| c.len() as i64)
         .unwrap_or(0);
 
+    // Quick TCP check to backend
+    let online = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:8080".parse().unwrap(),
+        Duration::from_secs(2),
+    ).is_ok();
+
+    state.online.store(online, Ordering::Relaxed);
+
+    // Debug log
+    let _ = std::fs::write(
+        std::path::Path::new(&state.db_path).parent().unwrap().join("health.log"),
+        format!("online={} db_size={} pending_sales={} pending_closures={}", online, db_size_bytes, pending_sales_count, pending_closures_count),
+    );
+
     Ok(db::TerminalHealth {
         terminal_id: "default".to_string(),
         db_size_bytes,
         pending_sales_count,
         pending_closures_count,
-        online_status: state.online.load(Ordering::Relaxed),
+        online_status: online,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
@@ -654,6 +668,7 @@ fn render_receipt_pdf(data: &ReceiptData) -> Result<Vec<u8>, String> {
         draw_text!(&format!("Chain: {}...", short_sig), font, 6.0, left);
     }
     draw_text!("Gracias por su compra!", font, 7.0, center);
+    let _ = y; // suppress unused assignment warning
 
     // Serialize to bytes
     let mut buf = Vec::new();
