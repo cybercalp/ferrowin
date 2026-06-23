@@ -23,8 +23,8 @@ func NewBillingService(repo InvoicingSeriesRepositoryRequired) *billingService {
 	}
 }
 
-// GenerateInvoiceNumber increments the terminal sequence and formats the invoice number (e.g. S1-16).
-func (s *billingService) GenerateInvoiceNumber(ctx context.Context, terminalID uuid.UUID) (string, int, error) {
+// GenerateFacturaNumber increments the terminal sequence and formats the invoice number (e.g. S1-16).
+func (s *billingService) GenerateFacturaNumber(ctx context.Context, terminalID uuid.UUID) (string, int, error) {
 	prefix, seq, err := s.repo.IncrementSequence(ctx, terminalID)
 	if err != nil {
 		return "", 0, err

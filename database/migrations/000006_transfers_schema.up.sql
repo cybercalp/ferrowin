@@ -4,13 +4,13 @@
 CREATE TABLE traspasos_almacen (
     id UUID PRIMARY KEY,
     empresa_id UUID NOT NULL REFERENCES empresas(id),
-    origen_id UUID NOT NULL REFERENCES warehouses(id),
-    destino_id UUID NOT NULL REFERENCES warehouses(id),
+    origen_id UUID NOT NULL REFERENCES almacenes(id),
+    destino_id UUID NOT NULL REFERENCES almacenes(id),
     estado VARCHAR(20) NOT NULL CHECK (estado IN ('Borrador', 'Procesado', 'Cancelado')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
-    CONSTRAINT chk_diff_warehouses CHECK (origen_id <> destino_id)
+    CONSTRAINT chk_diff_almacenes CHECK (origen_id <> destino_id)
 );
 
 -- 2. Create transfer lines table (ON DELETE CASCADE)

@@ -29,5 +29,5 @@ type InvoicingSeriesRepository interface {
 
 // BillingService defines the contract for generating invoice numbers.
 type BillingService interface {
-	GenerateInvoiceNumber(ctx context.Context, terminalID uuid.UUID) (string, int, error)
+	GenerateFacturaNumber(ctx context.Context, terminalID uuid.UUID) (string, int, error)
 }

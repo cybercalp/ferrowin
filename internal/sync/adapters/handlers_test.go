@@ -50,7 +50,8 @@ func setupHandlersTestDB(t *testing.T) (*idempotency.Tracker, *inventorydomain.I
 	ledgerRepo := inventoryadapters.NewSQLStockLedgerRepository(db, true)
 	invService := inventorydomain.NewInventoryService(ledgerRepo)
 
-	controller := adapters.NewSalesSyncController(db, true, invService, tracker)
+	mockBilling := &mockInvoiceGenerator{invoiceNumber: "S1-16", seq: 16}
+	controller := adapters.NewSalesSyncController(db, true, invService, tracker, mockBilling)
 	controller.SetDefaultWarehouse(uuid.New())
 
 	return tracker, invService, controller, cleanup

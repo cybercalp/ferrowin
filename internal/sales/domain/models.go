@@ -6,95 +6,128 @@ import (
 	"github.com/google/uuid"
 )
 
-// Status constants for Quote, Order, DeliveryNote and Invoice
+// Status constants for Presupuesto, Pedido, Albaran and Factura
 const (
-	StatusDraft     = "Draft"
-	StatusApproved  = "Approved"
-	StatusConverted = "Converted"
-	StatusCancelled = "Cancelled"
-	StatusIssued    = "Issued"
-	StatusProcessed = "Processed"
+	StatusDraft     = "Borrador"
+	StatusApproved  = "Aprobado"
+	StatusConverted = "Convertido"
+	StatusCancelled = "Anulado"
+	StatusIssued    = "Emitida"
+	StatusProcessed = "Procesado"
+	StatusRectified = "Rectificado"
 )
 
-// Quote represents a sales quote.
-type Quote struct {
-	ID        uuid.UUID   `json:"id"`
-	EmpresaID uuid.UUID   `json:"empresa_id"`
-	ClientID  uuid.UUID   `json:"client_id"`
-	Total     float64     `json:"total"`
-	Status    string      `json:"status"` // Draft, Approved, Converted, Cancelled
-	ExpiresAt time.Time   `json:"expires_at"`
-	CreatedAt time.Time   `json:"created_at"`
-	Lineas    []QuoteLine `json:"lineas,omitempty"`
+// Presupuesto represents a sales quote.
+type Presupuesto struct {
+	ID         uuid.UUID         `json:"id"`
+	EmpresaID  uuid.UUID         `json:"empresa_id"`
+	ClienteID  uuid.UUID         `json:"cliente_id"`
+	Total      float64           `json:"total"`
+	Estado     string            `json:"estado"`
+	FechaValidez time.Time       `json:"fecha_validez"`
+	CreatedAt  time.Time         `json:"created_at"`
+	Lineas     []PresupuestoLinea `json:"lineas,omitempty"`
 }
 
-type QuoteLine struct {
+type PresupuestoLinea struct {
 	ID             uuid.UUID `json:"id"`
-	QuoteID        uuid.UUID `json:"quote_id"`
+	PresupuestoID  uuid.UUID `json:"presupuesto_id"`
 	ProductoID     uuid.UUID `json:"producto_id"`
 	Cantidad       float64   `json:"cantidad"`
 	PrecioUnitario float64   `json:"precio_unitario"`
 	CosteUnitario  float64   `json:"coste_unitario"`
 }
 
-// Order represents a sales order.
-type Order struct {
-	ID        uuid.UUID   `json:"id"`
-	EmpresaID uuid.UUID   `json:"empresa_id"`
-	QuoteID   *uuid.UUID  `json:"quote_id,omitempty"`
-	Total     float64     `json:"total"`
-	Status    string      `json:"status"` // Draft, Approved, Converted, Cancelled
-	CreatedAt time.Time   `json:"created_at"`
-	Lineas    []OrderLine `json:"lineas,omitempty"`
+// Pedido represents a sales order.
+type Pedido struct {
+	ID         uuid.UUID       `json:"id"`
+	EmpresaID  uuid.UUID       `json:"empresa_id"`
+	PresupuestoID *uuid.UUID   `json:"presupuesto_id,omitempty"`
+	Total      float64         `json:"total"`
+	Estado     string          `json:"estado"`
+	CreatedAt  time.Time       `json:"created_at"`
+	Lineas     []PedidoLinea   `json:"lineas,omitempty"`
 }
 
-type OrderLine struct {
+type PedidoLinea struct {
 	ID             uuid.UUID `json:"id"`
-	OrderID        uuid.UUID `json:"order_id"`
+	PedidoID       uuid.UUID `json:"pedido_id"`
 	ProductoID     uuid.UUID `json:"producto_id"`
 	Cantidad       float64   `json:"cantidad"`
 	PrecioUnitario float64   `json:"precio_unitario"`
 }
 
-// DeliveryNote represents a delivery note.
-type DeliveryNote struct {
-	ID          uuid.UUID           `json:"id"`
-	EmpresaID   uuid.UUID           `json:"empresa_id"`
-	OrderID     *uuid.UUID          `json:"order_id,omitempty"`
-	Total       float64             `json:"total"`
-	Status      string              `json:"status"` // Draft, Converted, Cancelled, Processed
-	WarehouseID uuid.UUID           `json:"warehouse_id"`
-	CreatedAt   time.Time           `json:"created_at"`
-	Lineas      []DeliveryNoteLinea `json:"lineas,omitempty"`
+// Albaran represents a delivery note.
+type Albaran struct {
+	ID         uuid.UUID       `json:"id"`
+	EmpresaID  uuid.UUID       `json:"empresa_id"`
+	PedidoID   *uuid.UUID      `json:"pedido_id,omitempty"`
+	Total      float64         `json:"total"`
+	Estado     string          `json:"estado"`
+	AlmacenID  uuid.UUID       `json:"almacen_id"`
+	CreatedAt  time.Time       `json:"created_at"`
+	Lineas     []AlbaranLinea  `json:"lineas,omitempty"`
 }
 
-type DeliveryNoteLinea struct {
-	ID             uuid.UUID `json:"id"`
-	DeliveryNoteID uuid.UUID `json:"delivery_note_id"`
-	ProductoID     uuid.UUID `json:"producto_id"`
-	Cantidad       float64   `json:"cantidad"`
-	PrecioUnitario float64   `json:"precio_unitario"`
+type AlbaranLinea struct {
+	ID         uuid.UUID `json:"id"`
+	AlbaranID  uuid.UUID `json:"albaran_id"`
+	ProductoID uuid.UUID `json:"producto_id"`
+	Cantidad   float64   `json:"cantidad"`
+	PrecioUnitario float64 `json:"precio_unitario"`
 }
 
-// Invoice represents a sales invoice.
-type Invoice struct {
-	ID                uuid.UUID      `json:"id"`
-	EmpresaID         uuid.UUID      `json:"empresa_id"`
-	DeliveryNoteID    *uuid.UUID     `json:"delivery_note_id,omitempty"`
-	TerminalID        uuid.UUID      `json:"terminal_id"`
-	InvoicingSeriesID uuid.UUID      `json:"invoicing_series_id"`
-	InvoiceNumber     string         `json:"invoice_number"`
-	SequenceNumber    int            `json:"sequence_number"`
-	Total             float64        `json:"total"`
-	Status            string         `json:"status"` // Issued, Cancelled
-	CreatedAt         time.Time      `json:"created_at"`
-	Lineas            []InvoiceLinea `json:"lineas,omitempty"`
+// Factura represents a sales invoice.
+type Factura struct {
+	ID               uuid.UUID       `json:"id"`
+	EmpresaID        uuid.UUID       `json:"empresa_id"`
+	AlbaranID        *uuid.UUID      `json:"albaran_id,omitempty"`
+	TerminalID       uuid.UUID       `json:"terminal_id"`
+	SerieFacturacionID uuid.UUID     `json:"serie_facturacion_id"`
+	NumeroFactura    string          `json:"numero_factura"`
+	NumeroSecuencia  int             `json:"numero_secuencia"`
+	Total            float64         `json:"total"`
+	RectifiedTotal   float64         `json:"rectified_total"`
+	Estado           string          `json:"estado"`
+	CreatedAt        time.Time       `json:"created_at"`
+	Lineas           []FacturaLinea  `json:"lineas,omitempty"`
 }
 
-type InvoiceLinea struct {
-	ID             uuid.UUID `json:"id"`
-	InvoiceID      uuid.UUID `json:"invoice_id"`
-	ProductoID     uuid.UUID `json:"producto_id"`
-	Cantidad       float64   `json:"cantidad"`
-	PrecioUnitario float64   `json:"precio_unitario"`
+// FacturaRectificativa represents a rectifying invoice (document that reverses an invoice).
+type FacturaRectificativa struct {
+	ID             uuid.UUID              `json:"id"`
+	FacturaID      uuid.UUID              `json:"factura_id"`
+	EmpresaID      uuid.UUID              `json:"empresa_id"`
+	TerminalID     *uuid.UUID             `json:"terminal_id,omitempty"`
+	NumeroFR       string                 `json:"numero_fr"`
+	NumeroSecuencia int                   `json:"numero_secuencia"`
+	Total          float64                `json:"total"`
+	Motivo         string                 `json:"motivo"`
+	Estado         string                 `json:"estado"`
+	CreatedAt      time.Time              `json:"created_at"`
+	Lines          []FacturaRectificativaLinea `json:"lineas,omitempty"`
+}
+
+// FacturaRectificativaLinea represents a single line in a rectifying invoice.
+type FacturaRectificativaLinea struct {
+	ID                   uuid.UUID `json:"id"`
+	RectificativaID      uuid.UUID `json:"factura_rectificativa_id"`
+	ProductoID           uuid.UUID `json:"producto_id"`
+	Cantidad             float64   `json:"cantidad"`
+	PrecioUnitario       float64   `json:"precio_unitario"`
+}
+
+// FacturaRectificativaLineaInput is the input type for creating a rectifying invoice line.
+type FacturaRectificativaLineaInput struct {
+	ProductoID     uuid.UUID
+	Cantidad       float64
+	PrecioUnitario float64
+}
+
+type FacturaLinea struct {
+	ID        uuid.UUID `json:"id"`
+	FacturaID uuid.UUID `json:"factura_id"`
+	ProductoID uuid.UUID `json:"producto_id"`
+	Cantidad  float64   `json:"cantidad"`
+	PrecioUnitario float64 `json:"precio_unitario"`
 }

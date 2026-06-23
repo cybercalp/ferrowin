@@ -14,6 +14,7 @@ const (
 	MovementTypeWithdrawal     MovementType = "WITHDRAWAL"
 	MovementTypeSyncAdjustment MovementType = "SYNC_ADJUSTMENT"
 	MovementTypeTransfer       MovementType = "TRANSFER"
+	MovementTypeReturn         MovementType = "RETURN"
 )
 
 // TraspasoAlmacenEstado defines the state of a warehouse transfer document.

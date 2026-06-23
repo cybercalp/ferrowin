@@ -105,6 +105,27 @@ func (s *InventoryService) RecordWithdrawal(ctx context.Context, itemID, warehou
 	return entry, nil
 }
 
+// RecordReturn records a stock return (addition of stock from a credit note / returns).
+func (s *InventoryService) RecordReturn(ctx context.Context, itemID, warehouseID uuid.UUID, qty float64, refDocType *string, refDocID *uuid.UUID) (*StockLedgerEntry, error) {
+	if qty <= 0 {
+		return nil, ErrInvalidQuantity
+	}
+	entry := &StockLedgerEntry{
+		ID:                    uuid.New(),
+		ItemID:                itemID,
+		WarehouseID:           warehouseID,
+		Quantity:              qty,
+		MovementType:          MovementTypeReturn,
+		ReferenceDocumentType: refDocType,
+		ReferenceDocumentID:   refDocID,
+		CreatedAt:             s.now(),
+	}
+	if err := s.repo.Save(ctx, entry); err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
 // RecordSyncAdjustment records an offline TPV sales sync adjustment (deduction of stock).
 // It bypasses the stock check, allowing the stock balance to go negative.
 func (s *InventoryService) RecordSyncAdjustment(ctx context.Context, itemID, warehouseID uuid.UUID, qty float64, refDocType *string, refDocID *uuid.UUID) (*StockLedgerEntry, error) {

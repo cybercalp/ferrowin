@@ -51,7 +51,7 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 	return db, cleanup
 }
 
-func TestBillingService_GenerateInvoiceNumber(t *testing.T) {
+func TestBillingService_GenerateFacturaNumber(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Scenario: Sequence increment", func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestBillingService_GenerateInvoiceNumber(t *testing.T) {
 		}
 
 		// Generate invoice number
-		invoiceNum, seq, err := billingSvc.GenerateInvoiceNumber(ctx, terminalID)
+		invoiceNum, seq, err := billingSvc.GenerateFacturaNumber(ctx, terminalID)
 		if err != nil {
 			t.Fatalf("failed to generate invoice number: %v", err)
 		}
@@ -145,12 +145,12 @@ func TestBillingService_GenerateInvoiceNumber(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			inv1, _, err1 = billingSvc.GenerateInvoiceNumber(ctx, t1ID)
+			inv1, _, err1 = billingSvc.GenerateFacturaNumber(ctx, t1ID)
 		}()
 
 		go func() {
 			defer wg.Done()
-			inv2, _, err2 = billingSvc.GenerateInvoiceNumber(ctx, t2ID)
+			inv2, _, err2 = billingSvc.GenerateFacturaNumber(ctx, t2ID)
 		}()
 
 		wg.Wait()
@@ -200,7 +200,7 @@ func TestBillingService_GenerateInvoiceNumber(t *testing.T) {
 		for i := 0; i < numRequests; i++ {
 			go func() {
 				defer wg.Done()
-				_, seq, err := billingSvc.GenerateInvoiceNumber(ctx, terminalID)
+				_, seq, err := billingSvc.GenerateFacturaNumber(ctx, terminalID)
 				if err != nil {
 					errs <- err
 					return

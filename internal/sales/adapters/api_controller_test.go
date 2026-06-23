@@ -90,69 +90,70 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			prefix TEXT UNIQUE NOT NULL,
 			next_sequence INTEGER NOT NULL DEFAULT 1
 		)`,
-		`CREATE TABLE quote (
+		`CREATE TABLE presupuestos (
 			id TEXT PRIMARY KEY,
 			empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
-			client_id TEXT NOT NULL REFERENCES entidades(id) ON DELETE RESTRICT,
+			cliente_id TEXT NOT NULL REFERENCES entidades(id) ON DELETE RESTRICT,
 			total REAL NOT NULL,
-			status TEXT NOT NULL CHECK (status IN ('Draft', 'Approved', 'Converted', 'Cancelled')),
-			expires_at DATETIME NOT NULL,
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
+			fecha_validez DATETIME NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE quote_lines (
+		`CREATE TABLE presupuesto_lineas (
 			id TEXT PRIMARY KEY,
-			quote_id TEXT NOT NULL REFERENCES quote(id) ON DELETE CASCADE,
+			presupuesto_id TEXT NOT NULL REFERENCES presupuestos(id) ON DELETE CASCADE,
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
 			precio_unitario REAL NOT NULL,
 			coste_unitario REAL NOT NULL DEFAULT 0.00
 		)`,
-		`CREATE TABLE "order" (
+		`CREATE TABLE pedidos (
 			id TEXT PRIMARY KEY,
 			empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
-			quote_id TEXT REFERENCES quote(id) ON DELETE SET NULL,
+			presupuesto_id TEXT REFERENCES presupuestos(id) ON DELETE SET NULL,
 			total REAL NOT NULL,
-			status TEXT NOT NULL CHECK (status IN ('Draft', 'Approved', 'Converted', 'Cancelled')),
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE order_lines (
+		`CREATE TABLE pedido_lineas (
 			id TEXT PRIMARY KEY,
-			order_id TEXT NOT NULL REFERENCES "order"(id) ON DELETE CASCADE,
+			pedido_id TEXT NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
 			precio_unitario REAL NOT NULL
 		)`,
-		`CREATE TABLE delivery_note (
+		`CREATE TABLE albaranes (
 			id TEXT PRIMARY KEY,
 			empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
-			order_id TEXT REFERENCES "order"(id) ON DELETE SET NULL,
+			pedido_id TEXT REFERENCES pedidos(id) ON DELETE SET NULL,
 			total REAL NOT NULL,
-			status TEXT NOT NULL CHECK (status IN ('Draft', 'Processed', 'Converted', 'Cancelled')),
-			warehouse_id TEXT NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Procesado', 'Convertido', 'Anulado')),
+			almacen_id TEXT NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE delivery_note_lineas (
+		`CREATE TABLE albaran_lineas (
 			id TEXT PRIMARY KEY,
-			delivery_note_id TEXT NOT NULL REFERENCES delivery_note(id) ON DELETE CASCADE,
+			albaran_id TEXT NOT NULL REFERENCES albaranes(id) ON DELETE CASCADE,
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
 			precio_unitario REAL NOT NULL
 		)`,
-		`CREATE TABLE invoice (
+		`CREATE TABLE facturas (
 			id TEXT PRIMARY KEY,
 			empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
-			delivery_note_id TEXT REFERENCES delivery_note(id) ON DELETE SET NULL,
+			albaran_id TEXT REFERENCES albaranes(id) ON DELETE SET NULL,
 			terminal_id TEXT REFERENCES terminals(id) ON DELETE RESTRICT,
-			invoicing_series_id TEXT REFERENCES invoicing_series(id) ON DELETE RESTRICT,
-			invoice_number TEXT UNIQUE NOT NULL,
-			sequence_number INTEGER NOT NULL,
+			serie_facturacion_id TEXT REFERENCES invoicing_series(id) ON DELETE RESTRICT,
+			numero_factura TEXT UNIQUE NOT NULL,
+			numero_secuencia INTEGER NOT NULL,
 			total REAL NOT NULL,
-			status TEXT NOT NULL,
+			total_rectificado REAL NOT NULL DEFAULT 0.00,
+			estado TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE invoice_lineas (
+		`CREATE TABLE factura_lineas (
 			id TEXT PRIMARY KEY,
-			invoice_id TEXT NOT NULL REFERENCES invoice(id) ON DELETE CASCADE,
+			factura_id TEXT NOT NULL REFERENCES facturas(id) ON DELETE CASCADE,
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
 			precio_unitario REAL NOT NULL
@@ -229,8 +230,8 @@ func TestSalesController_Integration(t *testing.T) {
 
 	t.Run("Create Quote", func(t *testing.T) {
 		reqBody := fmt.Sprintf(`{
-			"client_id": "%s",
-			"expires_at": "%s",
+			"cliente_id": "%s",
+			"fecha_validez": "%s",
 			"lineas": [{"producto_id": "%s", "cantidad": 5.0, "precio_unitario": 10.0, "coste_unitario": 6.0}]
 		}`, clientA, time.Now().Add(24*time.Hour).Format(time.RFC3339), productID)
 
@@ -246,20 +247,20 @@ func TestSalesController_Integration(t *testing.T) {
 	t.Run("Conversion Flow & Multi-Tenant Mismatch", func(t *testing.T) {
 		// 1. Create a quote for Company A
 		reqBody := fmt.Sprintf(`{
-			"client_id": "%s",
-			"expires_at": "%s",
+			"cliente_id": "%s",
+			"fecha_validez": "%s",
 			"lineas": [{"producto_id": "%s", "cantidad": 5.0, "precio_unitario": 10.0, "coste_unitario": 6.0}]
 		}`, clientA, time.Now().Add(24*time.Hour).Format(time.RFC3339), productID)
 		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/quotes", bytes.NewBufferString(reqBody))
 		req.Header.Set("X-Empresa-ID", companyA.ID.String())
 		w := httptest.NewRecorder()
 		controller.ServeHTTP(w, req)
-		var q salesdomain.Quote
+		var q salesdomain.Presupuesto
 		json.Unmarshal(w.Body.Bytes(), &q)
 
 		// 2. Attempt to convert Quote of Company A using Company B's header
 		convBody := fmt.Sprintf(`{
-			"quote_id": "%s",
+			"presupuesto_id": "%s",
 			"user_id": "%s",
 			"recalculate_prices": false
 		}`, q.ID.String(), uuid.New().String())
@@ -280,13 +281,13 @@ func TestSalesController_Integration(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("failed to convert quote: %d", w.Code)
 		}
-		var o salesdomain.Order
+		var o salesdomain.Pedido
 		json.Unmarshal(w.Body.Bytes(), &o)
 
 		// 4. Convert Order to Delivery Note
 		convOrderBody := fmt.Sprintf(`{
-			"order_id": "%s",
-			"warehouse_id": "%s"
+			"pedido_id": "%s",
+			"almacen_id": "%s"
 		}`, o.ID.String(), warehouseA.ID.String())
 		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/orders/convert", bytes.NewBufferString(convOrderBody))
 		req.Header.Set("X-Empresa-ID", companyA.ID.String())
@@ -295,11 +296,11 @@ func TestSalesController_Integration(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("failed to convert order: %d", w.Code)
 		}
-		var dn salesdomain.DeliveryNote
+		var dn salesdomain.Albaran
 		json.Unmarshal(w.Body.Bytes(), &dn)
 
 		// 5. Attempt to Process Delivery Note -> Should Fail with Conflict due to insufficient stock (available: 0)
-		processBody := fmt.Sprintf(`{"delivery_note_id": "%s"}`, dn.ID.String())
+		processBody := fmt.Sprintf(`{"albaran_id": "%s"}`, dn.ID.String())
 		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/delivery-notes/process", bytes.NewBufferString(processBody))
 		req.Header.Set("X-Empresa-ID", companyA.ID.String())
 		w = httptest.NewRecorder()
@@ -344,9 +345,9 @@ func TestSalesController_Integration(t *testing.T) {
 
 		// 9. Convert processed delivery note to invoice
 		convDNBody := fmt.Sprintf(`{
-			"delivery_note_id": "%s",
+			"albaran_id": "%s",
 			"terminal_id": "%s",
-			"invoicing_series_id": "%s"
+			"serie_facturacion_id": "%s"
 		}`, dn.ID.String(), terminalID, seriesID)
 		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/delivery-notes/convert", bytes.NewBufferString(convDNBody))
 		req.Header.Set("X-Empresa-ID", companyA.ID.String())
@@ -355,11 +356,11 @@ func TestSalesController_Integration(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("failed to convert delivery note to invoice: %d. Body: %s", w.Code, w.Body.String())
 		}
-		var invoice salesdomain.Invoice
+		var invoice salesdomain.Factura
 		json.Unmarshal(w.Body.Bytes(), &invoice)
 
-		if invoice.InvoiceNumber != "S1-1" {
-			t.Errorf("expected invoice number S1-1, got %s", invoice.InvoiceNumber)
+		if invoice.NumeroFactura != "S1-1" {
+			t.Errorf("expected invoice number S1-1, got %s", invoice.NumeroFactura)
 		}
 	})
 }

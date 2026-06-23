@@ -7,7 +7,7 @@ CREATE TABLE empresas (
     activa BOOLEAN DEFAULT TRUE
 );
 
-CREATE TABLE warehouses (
+CREATE TABLE almacenes (
     id UUID PRIMARY KEY,
     empresa_id UUID NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -54,7 +54,7 @@ CREATE TABLE recepciones_compra (
     numero_albaran VARCHAR(50) NOT NULL,
     fecha TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     estado VARCHAR(20) NOT NULL CHECK (estado IN ('Borrador', 'Procesado', 'Cancelado')),
-    warehouse_id UUID NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+    almacen_id UUID NOT NULL REFERENCES almacenes(id) ON DELETE RESTRICT,
     UNIQUE(empresa_id, numero_albaran)
 );
 
@@ -66,21 +66,21 @@ CREATE TABLE recepcion_compra_lineas (
     precio_unitario NUMERIC(12,2) NOT NULL
 );
 
--- Seed default company and default warehouse
+-- Seed default company and default almacen
 INSERT INTO empresas (id, razon_social, nif, activa)
 VALUES ('00000000-0000-4000-a000-000000000001', 'Ferrowin S.L.', 'B12345678', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO warehouses (id, empresa_id, name, active)
+INSERT INTO almacenes (id, empresa_id, name, active)
 VALUES ('00000000-0000-4000-a000-000000000002', '00000000-0000-4000-a000-000000000001', 'Almacén Central', TRUE)
 ON CONFLICT (id) DO NOTHING;
 
--- Update existing ledger movements to default warehouse
+-- Update existing ledger movements to default almacen
 UPDATE stock_ledger_movements
-SET warehouse_id = '00000000-0000-4000-a000-000000000002'
-WHERE warehouse_id IS NOT NULL;
+SET almacen_id = '00000000-0000-4000-a000-000000000002'
+WHERE almacen_id IS NOT NULL;
 
 -- Add foreign key constraint to stock_ledger_movements
 ALTER TABLE stock_ledger_movements
-ADD CONSTRAINT fk_stock_ledger_movements_warehouse
-FOREIGN KEY (warehouse_id) REFERENCES warehouses(id);
+ADD CONSTRAINT fk_stock_ledger_movements_almacen
+FOREIGN KEY (almacen_id) REFERENCES almacenes(id);

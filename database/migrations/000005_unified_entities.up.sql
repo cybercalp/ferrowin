@@ -95,8 +95,8 @@ WHERE rc.proveedor_id = m.old_id;
 ALTER TABLE cobros_recibidos DROP CONSTRAINT IF EXISTS cobros_recibidos_cliente_id_fkey;
 ALTER TABLE cobros_recibidos ADD CONSTRAINT fk_cobros_recibidos_cliente FOREIGN KEY (cliente_id) REFERENCES entidades(id) ON DELETE CASCADE;
 
-ALTER TABLE quote DROP CONSTRAINT IF EXISTS quote_client_id_fkey;
-ALTER TABLE quote ADD CONSTRAINT fk_quote_client FOREIGN KEY (client_id) REFERENCES entidades(id) ON DELETE RESTRICT;
+ALTER TABLE presupuestos DROP CONSTRAINT IF EXISTS presupuestos_cliente_id_fkey;
+ALTER TABLE presupuestos ADD CONSTRAINT fk_presupuestos_cliente FOREIGN KEY (cliente_id) REFERENCES entidades(id) ON DELETE RESTRICT;
 
 ALTER TABLE pedidos_compra DROP CONSTRAINT IF EXISTS pedidos_compra_proveedor_id_fkey;
 ALTER TABLE pedidos_compra ADD CONSTRAINT fk_pedidos_compra_proveedor FOREIGN KEY (proveedor_id) REFERENCES entidades(id) ON DELETE RESTRICT;

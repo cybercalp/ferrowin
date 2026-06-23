@@ -47,7 +47,7 @@ CREATE TABLE terminals (
     is_active BOOLEAN DEFAULT TRUE
 );
 
-CREATE TABLE invoicing_series (
+CREATE TABLE series_facturacion (
     id UUID PRIMARY KEY,
     terminal_id UUID REFERENCES terminals(id) ON DELETE RESTRICT,
     prefix VARCHAR(10) UNIQUE NOT NULL,
@@ -55,39 +55,39 @@ CREATE TABLE invoicing_series (
 );
 
 -- Traceable Sales Documents
-CREATE TABLE quote (
+CREATE TABLE presupuestos (
     id UUID PRIMARY KEY,
-    client_id UUID NOT NULL,
+    cliente_id UUID NOT NULL,
     total NUMERIC(12,2) NOT NULL,
-    status VARCHAR(20) CHECK (status IN ('Draft', 'Approved', 'Converted', 'Cancelled')),
+    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE "order" (
+CREATE TABLE pedidos (
     id UUID PRIMARY KEY,
-    quote_id UUID REFERENCES quote(id) ON DELETE SET NULL,
+    presupuesto_id UUID REFERENCES presupuestos(id) ON DELETE SET NULL,
     total NUMERIC(12,2) NOT NULL,
-    status VARCHAR(20) CHECK (status IN ('Draft', 'Approved', 'Converted', 'Cancelled')),
+    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE delivery_note (
+CREATE TABLE albaranes (
     id UUID PRIMARY KEY,
-    order_id UUID REFERENCES "order"(id) ON DELETE SET NULL,
+    pedido_id UUID REFERENCES pedidos(id) ON DELETE SET NULL,
     total NUMERIC(12,2) NOT NULL,
-    status VARCHAR(20) CHECK (status IN ('Draft', 'Converted', 'Cancelled')),
+    estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Convertido', 'Anulado')),
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE invoice (
+CREATE TABLE facturas (
     id UUID PRIMARY KEY,
-    delivery_note_id UUID REFERENCES delivery_note(id) ON DELETE SET NULL,
+    albaran_id UUID REFERENCES albaranes(id) ON DELETE SET NULL,
     terminal_id UUID REFERENCES terminals(id) ON DELETE RESTRICT,
-    invoicing_series_id UUID REFERENCES invoicing_series(id) ON DELETE RESTRICT,
-    invoice_number VARCHAR(30) UNIQUE NOT NULL,
-    sequence_number INT NOT NULL,
+    serie_facturacion_id UUID REFERENCES series_facturacion(id) ON DELETE RESTRICT,
+    numero_factura VARCHAR(30) UNIQUE NOT NULL,
+    numero_secuencia INT NOT NULL,
     total NUMERIC(12,2) NOT NULL,
-    status VARCHAR(20),
+    estado VARCHAR(20),
     created_at TIMESTAMP DEFAULT NOW(),
     firma_registro VARCHAR(255),
     hash_anterior VARCHAR(255),
@@ -106,7 +106,7 @@ CREATE TABLE registro_sucesos (
 CREATE TABLE stock_ledger_movements (
     id UUID PRIMARY KEY,
     item_id UUID NOT NULL,
-    warehouse_id UUID NOT NULL,
+    almacen_id UUID NOT NULL,
     quantity NUMERIC(12,4) NOT NULL,
     movement_type VARCHAR(20) CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT')),
     reference_document_type VARCHAR(20),
@@ -121,13 +121,13 @@ CREATE INDEX idx_group_role_sets_group_id ON group_role_sets(group_id);
 CREATE INDEX idx_group_role_sets_role_set_id ON group_role_sets(role_set_id);
 CREATE INDEX idx_role_set_roles_role_set_id ON role_set_roles(role_set_id);
 CREATE INDEX idx_role_set_roles_role_id ON role_set_roles(role_id);
-CREATE INDEX idx_invoicing_series_terminal_id ON invoicing_series(terminal_id);
-CREATE INDEX idx_order_quote_id ON "order"(quote_id);
-CREATE INDEX idx_delivery_note_order_id ON delivery_note(order_id);
-CREATE INDEX idx_invoice_delivery_note_id ON invoice(delivery_note_id);
-CREATE INDEX idx_invoice_terminal_id ON invoice(terminal_id);
-CREATE INDEX idx_invoice_invoicing_series_id ON invoice(invoicing_series_id);
-CREATE INDEX idx_stock_ledger_movements_item_warehouse ON stock_ledger_movements(item_id, warehouse_id);
+CREATE INDEX idx_series_facturacion_terminal_id ON series_facturacion(terminal_id);
+CREATE INDEX idx_pedido_presupuesto_id ON pedidos(presupuesto_id);
+CREATE INDEX idx_albaranes_pedido_id ON albaranes(pedido_id);
+CREATE INDEX idx_facturas_albaran_id ON facturas(albaran_id);
+CREATE INDEX idx_facturas_terminal_id ON facturas(terminal_id);
+CREATE INDEX idx_facturas_serie_facturacion_id ON facturas(serie_facturacion_id);
+CREATE INDEX idx_stock_ledger_movements_item_almacen ON stock_ledger_movements(item_id, almacen_id);
 
 -- Box Closures (TPV sync)
 CREATE TABLE box_closures (

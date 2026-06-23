@@ -38,7 +38,7 @@ CREATE TABLE clientes (
 CREATE TABLE cobros_recibidos (
     id UUID PRIMARY KEY,
     cliente_id UUID REFERENCES clientes(id) ON DELETE CASCADE,
-    factura_id UUID REFERENCES invoice(id) ON DELETE SET NULL,
+    factura_id UUID REFERENCES facturas(id) ON DELETE SET NULL,
     importe NUMERIC(12,2) NOT NULL,
     fecha TIMESTAMP DEFAULT NOW(),
     metodo_pago VARCHAR(20) NOT NULL,

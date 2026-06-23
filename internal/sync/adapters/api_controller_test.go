@@ -85,6 +85,16 @@ func setupControllerTestDB(t *testing.T) (*sql.DB, func()) {
 	return db, cleanup
 }
 
+// mockInvoiceGenerator implements adapters.InvoiceNumberGenerator for testing.
+type mockInvoiceGenerator struct {
+	invoiceNumber string
+	seq           int
+}
+
+func (m *mockInvoiceGenerator) GenerateFacturaNumber(ctx context.Context, terminalID uuid.UUID) (string, int, error) {
+	return m.invoiceNumber, m.seq, nil
+}
+
 func TestSalesSyncController_HandleSyncSales(t *testing.T) {
 	ctx := context.Background()
 	db, cleanup := setupControllerTestDB(t)
@@ -100,7 +110,7 @@ func TestSalesSyncController_HandleSyncSales(t *testing.T) {
 	ledgerRepo := inventoryadapters.NewSQLStockLedgerRepository(db, true)
 	invService := inventorydomain.NewInventoryService(ledgerRepo)
 
-	controller := adapters.NewSalesSyncController(db, true, invService, tracker)
+	controller := adapters.NewSalesSyncController(db, true, invService, tracker, &mockInvoiceGenerator{invoiceNumber: "S1-16", seq: 16})
 	defaultWarehouse := uuid.New()
 	controller.SetDefaultWarehouse(defaultWarehouse)
 
@@ -149,11 +159,11 @@ func TestSalesSyncController_HandleSyncSales(t *testing.T) {
 		syncReq := adapters.SyncRequest{
 			Sales: []adapters.SyncSale{
 				{
-					ID:             saleID,
-					InvoiceNumber:  "S1-16",
-					SequenceNumber: 16,
-					CreatedAt:      "2026-06-05T13:00:00Z",
-					Total:          150.00,
+					ID:               saleID,
+					NumeroFactura:    "S1-16",
+					NumeroSecuencia:  16,
+					CreatedAt:        "2026-06-05T13:00:00Z",
+					Total:            150.00,
 					Items: []adapters.SyncItem{
 						{
 							ItemID:    itemID,
@@ -312,7 +322,7 @@ func TestSalesSyncController_HandleSyncVoids(t *testing.T) {
 
 	ledgerRepo := inventoryadapters.NewSQLStockLedgerRepository(db, true)
 	invService := inventorydomain.NewInventoryService(ledgerRepo)
-	controller := adapters.NewSalesSyncController(db, true, invService, tracker)
+	controller := adapters.NewSalesSyncController(db, true, invService, tracker, &mockInvoiceGenerator{invoiceNumber: "S1-16", seq: 16})
 
 	saleID := uuid.New().String()
 
@@ -488,9 +498,9 @@ func TestSyncSale_RoundtripWithFinancialFields(t *testing.T) {
 	hashAnt := "hash-ant"
 
 	sale := adapters.SyncSale{
-		ID:                  uuid.New().String(),
-		InvoiceNumber:       "TPV-0042",
-		SequenceNumber:      42,
+		ID:                uuid.New().String(),
+		NumeroFactura:     "TPV-0042",
+		NumeroSecuencia:   42,
 		CreatedAt:           "2026-06-20T09:30:00Z",
 		Total:               150.00,
 		Items:               []adapters.SyncItem{{ItemID: uuid.New().String(), Quantity: 2, UnitPrice: 75.00}},
@@ -615,7 +625,7 @@ func TestSalesSyncController_HandleSyncSales_FIFOReconciliation(t *testing.T) {
 	ledgerRepo := inventoryadapters.NewSQLStockLedgerRepository(db, true)
 	invService := inventorydomain.NewInventoryService(ledgerRepo)
 
-	controller := adapters.NewSalesSyncController(db, true, invService, tracker)
+	controller := adapters.NewSalesSyncController(db, true, invService, tracker, &mockInvoiceGenerator{invoiceNumber: "S1-16", seq: 16})
 	defaultWarehouse := uuid.New()
 	controller.SetDefaultWarehouse(defaultWarehouse)
 
@@ -645,11 +655,11 @@ func TestSalesSyncController_HandleSyncSales_FIFOReconciliation(t *testing.T) {
 	syncReq := adapters.SyncRequest{
 		Sales: []adapters.SyncSale{
 			{
-				ID:             saleID,
-				InvoiceNumber:  "S1-16",
-				SequenceNumber: 16,
-				CreatedAt:      "2026-06-05T13:00:00Z",
-				Total:          150.00,
+				ID:               saleID,
+				NumeroFactura:    "S1-16",
+				NumeroSecuencia:  16,
+				CreatedAt:        "2026-06-05T13:00:00Z",
+				Total:            150.00,
 				Items: []adapters.SyncItem{
 					{
 						ItemID:    itemID,
@@ -724,7 +734,7 @@ func TestSalesSyncController_HandleSyncEvents(t *testing.T) {
 
 	ledgerRepo := inventoryadapters.NewSQLStockLedgerRepository(db, true)
 	invService := inventorydomain.NewInventoryService(ledgerRepo)
-	controller := adapters.NewSalesSyncController(db, true, invService, tracker)
+	controller := adapters.NewSalesSyncController(db, true, invService, tracker, &mockInvoiceGenerator{invoiceNumber: "S1-16", seq: 16})
 
 	t.Run("Scenario: Successful events sync registers events in DB with status SINCRONIZADO", func(t *testing.T) {
 		idemKey := uuid.New().String()

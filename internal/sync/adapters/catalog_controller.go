@@ -413,7 +413,7 @@ type ClientDossierResponse struct {
 
 func (c *CatalogSyncController) HandleClientDossier(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClientIDs []string `json:"client_ids"`
+		ClienteIDs []string `json:"client_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -425,7 +425,7 @@ func (c *CatalogSyncController) HandleClientDossier(w http.ResponseWriter, r *ht
 	result.Estadisticas = []ClientStatsDossier{}
 	result.FacturasPendientes = []PendingInvoiceDossier{}
 
-	for _, clientID := range req.ClientIDs {
+	for _, clientID := range req.ClienteIDs {
 		// Query recent sales
 		var sales []RecentSaleDossier
 		var hasRecentSales bool

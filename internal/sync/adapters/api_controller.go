@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -14,22 +15,29 @@ import (
 	"github.com/google/uuid"
 )
 
+// InvoiceNumberGenerator defines the contract for generating server-side invoice numbers.
+type InvoiceNumberGenerator interface {
+	GenerateFacturaNumber(ctx context.Context, terminalID uuid.UUID) (string, int, error)
+}
+
 // SalesSyncController handles synchronization of offline sales and tracks idempotency.
 type SalesSyncController struct {
 	db               *sql.DB
 	isSQLite         bool
 	inventoryService *domain.InventoryService
 	idempTracker     *idempotency.Tracker
+	billingService   InvoiceNumberGenerator
 	defaultWarehouse uuid.UUID
 }
 
 // NewSalesSyncController creates a new SalesSyncController.
-func NewSalesSyncController(db *sql.DB, isSQLite bool, inventoryService *domain.InventoryService, idempTracker *idempotency.Tracker) *SalesSyncController {
+func NewSalesSyncController(db *sql.DB, isSQLite bool, inventoryService *domain.InventoryService, idempTracker *idempotency.Tracker, billingService InvoiceNumberGenerator) *SalesSyncController {
 	return &SalesSyncController{
 		db:               db,
 		isSQLite:         isSQLite,
 		inventoryService: inventoryService,
 		idempTracker:     idempTracker,
+		billingService:   billingService,
 		defaultWarehouse: uuid.Nil,
 	}
 }
@@ -104,8 +112,8 @@ type SyncSalePayment struct {
 // SyncSale represents an offline sale document being synchronized.
 type SyncSale struct {
 	ID                  string        `json:"id"`
-	InvoiceNumber       string        `json:"invoice_number"`
-	SequenceNumber      int           `json:"sequence_number"`
+	NumeroFactura       string        `json:"invoice_number"`
+	NumeroSecuencia     int           `json:"sequence_number"`
 	CreatedAt           string        `json:"created_at"`
 	Total               float64       `json:"total"`
 	Items               []SyncItem    `json:"items"`
@@ -142,7 +150,7 @@ type SyncEventsRequest struct {
 // SyncVoidRequest is the request payload for synchronizing a void/ANULACION event.
 type SyncVoidRequest struct {
 	SaleID        string `json:"sale_id"`
-	Reason        string `json:"reason"`
+	Motivo        string `json:"reason"`
 	FirmaRegistro string `json:"firma_registro"`
 	HashAnterior  string `json:"hash_anterior"`
 }
@@ -154,9 +162,10 @@ type SyncVoidResponse struct {
 
 // SyncResponse is the response payload for POS sales synchronization.
 type SyncResponse struct {
-	Status       string   `json:"status"`
-	SyncedCount  int      `json:"synced_count"`
-	ProcessedIDs []string `json:"processed_ids"`
+	Status         string            `json:"status"`
+	SyncedCount    int               `json:"synced_count"`
+	ProcessedIDs   []string          `json:"processed_ids"`
+	InvoiceNumbers map[string]string `json:"invoice_numbers,omitempty"`
 }
 
 // HandleSyncSales processes the incoming POST request to synchronize POS offline sales.
@@ -212,6 +221,7 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 	}
 
 	var processedIDs []string
+	invoiceNumbers := make(map[string]string)
 
 	// Define queries dynamically for SQLite vs Postgres
 	var selectSeriesQuery string
@@ -234,9 +244,9 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		parts := strings.Split(sale.InvoiceNumber, "-")
+		parts := strings.Split(sale.NumeroFactura, "-")
 		if len(parts) < 2 {
-			http.Error(w, "invalid invoice number format: "+sale.InvoiceNumber, http.StatusBadRequest)
+			http.Error(w, "invalid invoice number format: "+sale.NumeroFactura, http.StatusBadRequest)
 			return
 		}
 		prefix := parts[0]
@@ -254,6 +264,13 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 		seriesUUID, _ := uuid.Parse(seriesIDStr)
 		terminalUUID, _ := uuid.Parse(terminalIDStr)
 
+		// Generate server-side invoice number using the billing service
+		invoiceNumber, seq, err := c.billingService.GenerateFacturaNumber(r.Context(), terminalUUID)
+		if err != nil {
+			http.Error(w, "failed to generate invoice number: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		parsedCreatedAt, err := time.Parse(time.RFC3339, sale.CreatedAt)
 		if err != nil {
 			parsedCreatedAt, err = time.Parse("2006-01-02T15:04:05Z", sale.CreatedAt)
@@ -262,13 +279,13 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 			}
 		}
 
-		// Insert Invoice
+		// Insert Invoice with server-generated invoice_number and sequence_number
 		_, err = tx.ExecContext(r.Context(), insertInvoiceQuery,
 			saleUUID.String(),
 			terminalUUID.String(),
 			seriesUUID.String(),
-			sale.InvoiceNumber,
-			sale.SequenceNumber,
+			invoiceNumber,
+			seq,
 			sale.Total,
 			"Issued",
 			parsedCreatedAt.UTC(),
@@ -314,6 +331,7 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 			}
 		}
 
+		invoiceNumbers[sale.ID] = invoiceNumber
 		processedIDs = append(processedIDs, sale.ID)
 	}
 
@@ -325,9 +343,10 @@ func (c *SalesSyncController) HandleSyncSales(w http.ResponseWriter, r *http.Req
 
 	// Prepare response
 	resp := SyncResponse{
-		Status:       "success",
-		SyncedCount:  len(processedIDs),
-		ProcessedIDs: processedIDs,
+		Status:         "success",
+		SyncedCount:    len(processedIDs),
+		ProcessedIDs:   processedIDs,
+		InvoiceNumbers: invoiceNumbers,
 	}
 
 	respBytes, err := json.Marshal(resp)
@@ -554,7 +573,7 @@ func (c *SalesSyncController) HandleSyncVoids(w http.ResponseWriter, r *http.Req
 	}
 
 	// Validate required fields
-	if req.SaleID == "" || req.Reason == "" || req.FirmaRegistro == "" || req.HashAnterior == "" {
+	if req.SaleID == "" || req.Motivo == "" || req.FirmaRegistro == "" || req.HashAnterior == "" {
 		http.Error(w, "missing required fields: sale_id, reason, firma_registro, hash_anterior", http.StatusBadRequest)
 		return
 	}
@@ -593,7 +612,7 @@ func (c *SalesSyncController) HandleSyncVoids(w http.ResponseWriter, r *http.Req
 
 	detallesMap := map[string]string{
 		"sale_id":        req.SaleID,
-		"reason":         req.Reason,
+		"reason":         req.Motivo,
 		"firma_registro": req.FirmaRegistro,
 		"hash_anterior":  req.HashAnterior,
 	}
