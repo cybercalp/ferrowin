@@ -97,7 +97,8 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			total REAL NOT NULL,
 			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
 			fecha_validez DATETIME NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			version INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE presupuesto_lineas (
 			id TEXT PRIMARY KEY,
@@ -113,7 +114,8 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			presupuesto_id TEXT REFERENCES presupuestos(id) ON DELETE SET NULL,
 			total REAL NOT NULL,
 			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			version INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE pedido_lineas (
 			id TEXT PRIMARY KEY,
@@ -129,7 +131,8 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			total REAL NOT NULL,
 			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Procesado', 'Convertido', 'Anulado')),
 			almacen_id TEXT NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			version INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE albaran_lineas (
 			id TEXT PRIMARY KEY,
@@ -149,7 +152,8 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			total REAL NOT NULL,
 			total_rectificado REAL NOT NULL DEFAULT 0.00,
 			estado TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			version INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE factura_lineas (
 			id TEXT PRIMARY KEY,
@@ -163,7 +167,7 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			item_id TEXT NOT NULL,
 			warehouse_id TEXT NOT NULL REFERENCES warehouses(id),
 			quantity REAL NOT NULL,
-			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT')),
+			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT', 'RETURN')),
 			reference_document_type TEXT,
 			reference_document_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP

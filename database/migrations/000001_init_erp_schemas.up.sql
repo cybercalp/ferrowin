@@ -61,7 +61,8 @@ CREATE TABLE presupuestos (
     cliente_id UUID NOT NULL,
     total NUMERIC(12,2) NOT NULL,
     estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    version INT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE pedidos (
@@ -70,7 +71,8 @@ CREATE TABLE pedidos (
     presupuesto_id UUID REFERENCES presupuestos(id) ON DELETE SET NULL,
     total NUMERIC(12,2) NOT NULL,
     estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Aprobado', 'Convertido', 'Anulado')),
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    version INT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE albaranes (
@@ -80,7 +82,8 @@ CREATE TABLE albaranes (
     almacen_id UUID NOT NULL,
     total NUMERIC(12,2) NOT NULL,
     estado VARCHAR(20) CHECK (estado IN ('Borrador', 'Convertido', 'Anulado')),
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    version INT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE facturas (
@@ -96,7 +99,8 @@ CREATE TABLE facturas (
     created_at TIMESTAMP DEFAULT NOW(),
     firma_registro VARCHAR(255),
     hash_anterior VARCHAR(255),
-    datos_encadenamiento TEXT
+    datos_encadenamiento TEXT,
+    version INT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE registro_sucesos (

@@ -19,6 +19,7 @@ var (
 	ErrBillingServiceNil        = errors.New("billing service is required but not configured")
 	ErrTenantMismatch           = errors.New("tenant company mismatch")
 	ErrInvalidStatus            = errors.New("invalid status transition")
+	ErrConcurrentModification   = errors.New("concurrent modification detected, please retry")
 	ErrPresupuestoNotFound            = errors.New("quote not found")
 	ErrPedidoNotFound            = errors.New("order not found")
 	ErrAlbaranNotFound     = errors.New("delivery note not found")
@@ -234,7 +235,14 @@ func (s *SalesService) CancelAlbaran(ctx context.Context, empresaID, dnID uuid.U
 		return fmt.Errorf("%w: cannot cancel a converted delivery note", ErrInvalidStatus)
 	}
 	if dn.Estado == StatusProcessed {
-		return fmt.Errorf("%w: cannot cancel a processed delivery note", ErrInvalidStatus)
+		// Reverse stock withdrawals before cancelling
+		refDocType := "ALBARAN_CANCEL"
+		for _, l := range dn.Lineas {
+			_, err := s.invService.RecordReturn(ctx, l.ProductoID, dn.AlmacenID, l.Cantidad, &refDocType, &dn.ID)
+			if err != nil {
+				return fmt.Errorf("failed to reverse stock for product %s: %w", l.ProductoID, err)
+			}
+		}
 	}
 	return s.repo.CancelAlbaran(ctx, dnID)
 }
@@ -464,12 +472,17 @@ func (s *SalesService) ProcessAlbaran(ctx context.Context, empresaID, dnID uuid.
 	}
 
 	refDocType := "ALBARAN"
-	// Record stock withdrawals
-	for _, l := range dn.Lineas {
-		_, err := s.invService.RecordWithdrawal(ctx, l.ProductoID, dn.AlmacenID, l.Cantidad, &refDocType, &dn.ID)
-		if err != nil {
-			return fmt.Errorf("failed to deduct stock for product %s: %w", l.ProductoID, err)
+	// Record stock withdrawals atomically — roll back all on partial failure
+	items := make([]inventorydomain.WithdrawalItem, len(dn.Lineas))
+	for i, l := range dn.Lineas {
+		items[i] = inventorydomain.WithdrawalItem{
+			ItemID:      l.ProductoID,
+			WarehouseID: dn.AlmacenID,
+			Qty:         l.Cantidad,
 		}
+	}
+	if _, err := s.invService.RecordWithdrawals(ctx, items, &refDocType, &dn.ID); err != nil {
+		return err
 	}
 
 	dn.Estado = StatusProcessed

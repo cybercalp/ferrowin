@@ -111,18 +111,28 @@ func (r *SQLSalesRepository) SavePresupuesto(ctx context.Context, q *domain.Pres
 
 	var qPresupuesto string
 	if r.isSQLite {
-		qPresupuesto = `INSERT INTO presupuestos (id, empresa_id, cliente_id, total, estado, fecha_validez, created_at) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total`
+		qPresupuesto = `INSERT INTO presupuestos (id, empresa_id, cliente_id, total, estado, fecha_validez, created_at, version) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total, version=excluded.version + 1
+                  WHERE version = excluded.version`
 	} else {
-		qPresupuesto = `INSERT INTO presupuestos (id, empresa_id, cliente_id, total, estado, fecha_validez, created_at) 
-                  VALUES ($1, $2, $3, $4, $5, $6, $7)
-                  ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total`
+		qPresupuesto = `INSERT INTO presupuestos (id, empresa_id, cliente_id, total, estado, fecha_validez, created_at, version) 
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                  ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total, version=EXCLUDED.version + 1
+                  WHERE presupuestos.version = EXCLUDED.version`
 	}
 
-	_, err = tx.ExecContext(ctx, qPresupuesto, q.ID.String(), q.EmpresaID.String(), q.ClienteID.String(), q.Total, q.Estado, q.FechaValidez.UTC(), q.CreatedAt.UTC())
+	result, err := tx.ExecContext(ctx, qPresupuesto, q.ID.String(), q.EmpresaID.String(), q.ClienteID.String(), q.Total, q.Estado, q.FechaValidez.UTC(), q.CreatedAt.UTC(), q.Version)
 	if err != nil {
 		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrConcurrentModification
 	}
 
 	// Delete existing lines if updating
@@ -159,16 +169,17 @@ func (r *SQLSalesRepository) SavePresupuesto(ctx context.Context, q *domain.Pres
 func (r *SQLSalesRepository) GetPresupuesto(ctx context.Context, id uuid.UUID) (*domain.Presupuesto, error) {
 	var qPresupuesto string
 	if r.isSQLite {
-		qPresupuesto = `SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at FROM presupuestos WHERE id = ?`
+		qPresupuesto = `SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at, version FROM presupuestos WHERE id = ?`
 	} else {
-		qPresupuesto = `SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at FROM presupuestos WHERE id = $1`
+		qPresupuesto = `SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at, version FROM presupuestos WHERE id = $1`
 	}
 
 	var idStr, empIDStr, clientIDStr, status string
 	var expiresAt, createdAt time.Time
 	var total float64
+	var version int
 
-	err := r.db.QueryRowContext(ctx, qPresupuesto, id.String()).Scan(&idStr, &empIDStr, &clientIDStr, &total, &status, &expiresAt, &createdAt)
+	err := r.db.QueryRowContext(ctx, qPresupuesto, id.String()).Scan(&idStr, &empIDStr, &clientIDStr, &total, &status, &expiresAt, &createdAt, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrPresupuestoNotFound
 	} else if err != nil {
@@ -220,6 +231,7 @@ func (r *SQLSalesRepository) GetPresupuesto(ctx context.Context, id uuid.UUID) (
 		Estado:    status,
 		FechaValidez: expiresAt,
 		CreatedAt: createdAt,
+		Version:   version,
 		Lineas:    lines,
 	}, nil
 }
@@ -275,9 +287,9 @@ func (r *SQLSalesRepository) ListPresupuestos(ctx context.Context, empresaID uui
 
 	var dataQuery string
 	if r.isSQLite {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at FROM presupuestos %s ORDER BY created_at DESC LIMIT ? OFFSET ?", where)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at, version FROM presupuestos %s ORDER BY created_at DESC LIMIT ? OFFSET ?", where)
 	} else {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at FROM presupuestos %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, cliente_id, total, estado, fecha_validez, created_at, version FROM presupuestos %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
 	}
 	dataArgs := append(args, pageSize, offset)
 
@@ -292,7 +304,8 @@ func (r *SQLSalesRepository) ListPresupuestos(ctx context.Context, empresaID uui
 		var idStr, empIDStr, clientIDStr, status string
 		var expiresAt, createdAt time.Time
 		var total float64
-		if err := rows.Scan(&idStr, &empIDStr, &clientIDStr, &total, &status, &expiresAt, &createdAt); err != nil {
+		var version int
+		if err := rows.Scan(&idStr, &empIDStr, &clientIDStr, &total, &status, &expiresAt, &createdAt, &version); err != nil {
 			return nil, 0, err
 		}
 		qUUID, _ := uuid.Parse(idStr)
@@ -306,6 +319,7 @@ func (r *SQLSalesRepository) ListPresupuestos(ctx context.Context, empresaID uui
 			Estado:    status,
 			FechaValidez: expiresAt,
 			CreatedAt: createdAt,
+			Version:   version,
 		})
 	}
 	return quotes, total, nil
@@ -327,18 +341,28 @@ func (r *SQLSalesRepository) SavePedido(ctx context.Context, o *domain.Pedido) e
 	}
 
 	if r.isSQLite {
-		qPedido = `INSERT INTO pedidos (id, empresa_id, presupuesto_id, total, estado, created_at) 
-                  VALUES (?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total`
+		qPedido = `INSERT INTO pedidos (id, empresa_id, presupuesto_id, total, estado, created_at, version) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total, version=excluded.version + 1
+                  WHERE version = excluded.version`
 	} else {
-		qPedido = `INSERT INTO pedidos (id, empresa_id, presupuesto_id, total, estado, created_at) 
-                  VALUES ($1, $2, $3, $4, $5, $6)
-                  ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total`
+		qPedido = `INSERT INTO pedidos (id, empresa_id, presupuesto_id, total, estado, created_at, version) 
+                  VALUES ($1, $2, $3, $4, $5, $6, $7)
+                  ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total, version=EXCLUDED.version + 1
+                  WHERE pedidos.version = EXCLUDED.version`
 	}
 
-	_, err = tx.ExecContext(ctx, qPedido, o.ID.String(), o.EmpresaID.String(), quoteIDVal, o.Total, o.Estado, o.CreatedAt.UTC())
+	result, err := tx.ExecContext(ctx, qPedido, o.ID.String(), o.EmpresaID.String(), quoteIDVal, o.Total, o.Estado, o.CreatedAt.UTC(), o.Version)
 	if err != nil {
 		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrConcurrentModification
 	}
 
 	// Delete existing lines if updating
@@ -375,17 +399,18 @@ func (r *SQLSalesRepository) SavePedido(ctx context.Context, o *domain.Pedido) e
 func (r *SQLSalesRepository) GetPedido(ctx context.Context, id uuid.UUID) (*domain.Pedido, error) {
 	var qPedido string
 	if r.isSQLite {
-		qPedido = `SELECT id, empresa_id, presupuesto_id, total, estado, created_at FROM pedidos WHERE id = ?`
+		qPedido = `SELECT id, empresa_id, presupuesto_id, total, estado, created_at, version FROM pedidos WHERE id = ?`
 	} else {
-		qPedido = `SELECT id, empresa_id, presupuesto_id, total, estado, created_at FROM pedidos WHERE id = $1`
+		qPedido = `SELECT id, empresa_id, presupuesto_id, total, estado, created_at, version FROM pedidos WHERE id = $1`
 	}
 
 	var idStr, empIDStr, status string
 	var quoteIDStr sql.NullString
 	var createdAt time.Time
 	var total float64
+	var version int
 
-	err := r.db.QueryRowContext(ctx, qPedido, id.String()).Scan(&idStr, &empIDStr, &quoteIDStr, &total, &status, &createdAt)
+	err := r.db.QueryRowContext(ctx, qPedido, id.String()).Scan(&idStr, &empIDStr, &quoteIDStr, &total, &status, &createdAt, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrPedidoNotFound
 	} else if err != nil {
@@ -440,6 +465,7 @@ func (r *SQLSalesRepository) GetPedido(ctx context.Context, id uuid.UUID) (*doma
 		Total:     total,
 		Estado:    status,
 		CreatedAt: createdAt,
+		Version:   version,
 		Lineas:    lines,
 	}, nil
 }
@@ -490,9 +516,9 @@ func (r *SQLSalesRepository) ListPedidos(ctx context.Context, empresaID uuid.UUI
 
 	var dataQuery string
 	if r.isSQLite {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, presupuesto_id, total, estado, created_at FROM pedidos %s ORDER BY created_at DESC LIMIT ? OFFSET ?", where)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, presupuesto_id, total, estado, created_at, version FROM pedidos %s ORDER BY created_at DESC LIMIT ? OFFSET ?", where)
 	} else {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, presupuesto_id, total, estado, created_at FROM pedidos %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, presupuesto_id, total, estado, created_at, version FROM pedidos %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
 	}
 	dataArgs := append(args, pageSize, offset)
 
@@ -508,7 +534,8 @@ func (r *SQLSalesRepository) ListPedidos(ctx context.Context, empresaID uuid.UUI
 		var quoteIDStr sql.NullString
 		var createdAt time.Time
 		var total float64
-		if err := rows.Scan(&idStr, &empIDStr, &quoteIDStr, &total, &status, &createdAt); err != nil {
+		var version int
+		if err := rows.Scan(&idStr, &empIDStr, &quoteIDStr, &total, &status, &createdAt, &version); err != nil {
 			return nil, 0, err
 		}
 		oUUID, _ := uuid.Parse(idStr)
@@ -527,6 +554,7 @@ func (r *SQLSalesRepository) ListPedidos(ctx context.Context, empresaID uuid.UUI
 			Total:     total,
 			Estado:    status,
 			CreatedAt: createdAt,
+			Version:   version,
 		})
 	}
 	return orders, total, nil
@@ -548,18 +576,28 @@ func (r *SQLSalesRepository) SaveAlbaran(ctx context.Context, dn *domain.Albaran
 	}
 
 	if r.isSQLite {
-		qDN = `INSERT INTO albaranes (id, empresa_id, pedido_id, total, estado, almacen_id, created_at) 
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total`
+		qDN = `INSERT INTO albaranes (id, empresa_id, pedido_id, total, estado, almacen_id, created_at, version) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total, version=excluded.version + 1
+               WHERE version = excluded.version`
 	} else {
-		qDN = `INSERT INTO albaranes (id, empresa_id, pedido_id, total, estado, almacen_id, created_at) 
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
-               ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total`
+		qDN = `INSERT INTO albaranes (id, empresa_id, pedido_id, total, estado, almacen_id, created_at, version) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total, version=EXCLUDED.version + 1
+               WHERE albaranes.version = EXCLUDED.version`
 	}
 
-	_, err = tx.ExecContext(ctx, qDN, dn.ID.String(), dn.EmpresaID.String(), orderIDVal, dn.Total, dn.Estado, dn.AlmacenID.String(), dn.CreatedAt.UTC())
+	result, err := tx.ExecContext(ctx, qDN, dn.ID.String(), dn.EmpresaID.String(), orderIDVal, dn.Total, dn.Estado, dn.AlmacenID.String(), dn.CreatedAt.UTC(), dn.Version)
 	if err != nil {
 		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrConcurrentModification
 	}
 
 	// Delete existing lines if updating
@@ -596,17 +634,18 @@ func (r *SQLSalesRepository) SaveAlbaran(ctx context.Context, dn *domain.Albaran
 func (r *SQLSalesRepository) GetAlbaran(ctx context.Context, id uuid.UUID) (*domain.Albaran, error) {
 	var qDN string
 	if r.isSQLite {
-		qDN = `SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at FROM albaranes WHERE id = ?`
+		qDN = `SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at, version FROM albaranes WHERE id = ?`
 	} else {
-		qDN = `SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at FROM albaranes WHERE id = $1`
+		qDN = `SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at, version FROM albaranes WHERE id = $1`
 	}
 
 	var idStr, empIDStr, status, whIDStr string
 	var orderIDStr sql.NullString
 	var createdAt time.Time
 	var total float64
+	var version int
 
-	err := r.db.QueryRowContext(ctx, qDN, id.String()).Scan(&idStr, &empIDStr, &orderIDStr, &total, &status, &whIDStr, &createdAt)
+	err := r.db.QueryRowContext(ctx, qDN, id.String()).Scan(&idStr, &empIDStr, &orderIDStr, &total, &status, &whIDStr, &createdAt, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrAlbaranNotFound
 	} else if err != nil {
@@ -663,6 +702,7 @@ func (r *SQLSalesRepository) GetAlbaran(ctx context.Context, id uuid.UUID) (*dom
 		Estado:      status,
 		AlmacenID: whUUID,
 		CreatedAt:   createdAt,
+		Version:     version,
 		Lineas:      lines,
 	}, nil
 }
@@ -713,9 +753,9 @@ func (r *SQLSalesRepository) ListAlbarans(ctx context.Context, empresaID uuid.UU
 
 	var dataQuery string
 	if r.isSQLite {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at FROM albaranes %s ORDER BY created_at DESC LIMIT ? OFFSET ?", where)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at, version FROM albaranes %s ORDER BY created_at DESC LIMIT ? OFFSET ?", where)
 	} else {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at FROM albaranes %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_id, total, estado, almacen_id, created_at, version FROM albaranes %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
 	}
 	dataArgs := append(args, pageSize, offset)
 
@@ -731,7 +771,8 @@ func (r *SQLSalesRepository) ListAlbarans(ctx context.Context, empresaID uuid.UU
 		var orderIDStr sql.NullString
 		var createdAt time.Time
 		var total float64
-		if err := rows.Scan(&idStr, &empIDStr, &orderIDStr, &total, &status, &whIDStr, &createdAt); err != nil {
+		var version int
+		if err := rows.Scan(&idStr, &empIDStr, &orderIDStr, &total, &status, &whIDStr, &createdAt, &version); err != nil {
 			return nil, 0, err
 		}
 		dnUUID, _ := uuid.Parse(idStr)
@@ -752,6 +793,7 @@ func (r *SQLSalesRepository) ListAlbarans(ctx context.Context, empresaID uuid.UU
 			Estado:      status,
 			AlmacenID: whUUID,
 			CreatedAt:   createdAt,
+			Version:     version,
 		})
 	}
 	return notes, total, nil
@@ -773,16 +815,18 @@ func (r *SQLSalesRepository) SaveFactura(ctx context.Context, inv *domain.Factur
 	}
 
 	if r.isSQLite {
-		qFactura = `INSERT INTO facturas (id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                     ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total, total_rectificado=excluded.total_rectificado`
+		qFactura = `INSERT INTO facturas (id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at, version) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total, total_rectificado=excluded.total_rectificado, version=excluded.version + 1
+                     WHERE version = excluded.version`
 	} else {
-		qFactura = `INSERT INTO facturas (id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at) 
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                     ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total, total_rectificado=EXCLUDED.total_rectificado`
+		qFactura = `INSERT INTO facturas (id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at, version) 
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                     ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total, total_rectificado=EXCLUDED.total_rectificado, version=EXCLUDED.version + 1
+                     WHERE facturas.version = EXCLUDED.version`
 	}
 
-	_, err = tx.ExecContext(ctx, qFactura,
+	result, err := tx.ExecContext(ctx, qFactura,
 		inv.ID.String(),
 		inv.EmpresaID.String(),
 		dnIDVal,
@@ -794,9 +838,18 @@ func (r *SQLSalesRepository) SaveFactura(ctx context.Context, inv *domain.Factur
 		inv.RectifiedTotal,
 		inv.Estado,
 		inv.CreatedAt.UTC(),
+		inv.Version,
 	)
 	if err != nil {
 		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrConcurrentModification
 	}
 
 	// Delete existing lines if updating
@@ -833,9 +886,9 @@ func (r *SQLSalesRepository) SaveFactura(ctx context.Context, inv *domain.Factur
 func (r *SQLSalesRepository) GetFactura(ctx context.Context, id uuid.UUID) (*domain.Factura, error) {
 	var qFactura string
 	if r.isSQLite {
-		qFactura = `SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at FROM facturas WHERE id = ?`
+		qFactura = `SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at, version FROM facturas WHERE id = ?`
 	} else {
-		qFactura = `SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at FROM facturas WHERE id = $1`
+		qFactura = `SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at, version FROM facturas WHERE id = $1`
 	}
 
 	var idStr, empIDStr, termIDStr, seriesIDStr, invoiceNumber, status string
@@ -843,8 +896,9 @@ func (r *SQLSalesRepository) GetFactura(ctx context.Context, id uuid.UUID) (*dom
 	var seq int
 	var createdAt time.Time
 	var total, creditedTotal float64
+	var version int
 
-	err := r.db.QueryRowContext(ctx, qFactura, id.String()).Scan(&idStr, &empIDStr, &dnIDStr, &termIDStr, &seriesIDStr, &invoiceNumber, &seq, &total, &creditedTotal, &status, &createdAt)
+	err := r.db.QueryRowContext(ctx, qFactura, id.String()).Scan(&idStr, &empIDStr, &dnIDStr, &termIDStr, &seriesIDStr, &invoiceNumber, &seq, &total, &creditedTotal, &status, &createdAt, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrFacturaNotFound
 	} else if err != nil {
@@ -906,6 +960,7 @@ func (r *SQLSalesRepository) GetFactura(ctx context.Context, id uuid.UUID) (*dom
 		RectifiedTotal:     creditedTotal,
 		Estado:            status,
 		CreatedAt:         createdAt,
+		Version:           version,
 		Lineas:            lines,
 	}, nil
 }
@@ -956,9 +1011,9 @@ func (r *SQLSalesRepository) ListFacturas(ctx context.Context, empresaID uuid.UU
 
 	var dataQuery string
 	if r.isSQLite {
-		dataQuery = fmt.Sprintf(`SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at FROM facturas %s ORDER BY created_at DESC LIMIT ? OFFSET ?`, where)
+		dataQuery = fmt.Sprintf(`SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at, version FROM facturas %s ORDER BY created_at DESC LIMIT ? OFFSET ?`, where)
 	} else {
-		dataQuery = fmt.Sprintf(`SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at FROM facturas %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+		dataQuery = fmt.Sprintf(`SELECT id, empresa_id, albaran_id, terminal_id, serie_facturacion_id, numero_factura, numero_secuencia, total, total_rectificado, estado, created_at, version FROM facturas %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
 	}
 	dataArgs := append(args, pageSize, offset)
 
@@ -975,7 +1030,8 @@ func (r *SQLSalesRepository) ListFacturas(ctx context.Context, empresaID uuid.UU
 		var seq int
 		var createdAt time.Time
 		var total, creditedTotal float64
-		if err := rows.Scan(&idStr, &empIDStr, &dnIDStr, &termIDStr, &seriesIDStr, &invoiceNumber, &seq, &total, &creditedTotal, &status, &createdAt); err != nil {
+		var version int
+		if err := rows.Scan(&idStr, &empIDStr, &dnIDStr, &termIDStr, &seriesIDStr, &invoiceNumber, &seq, &total, &creditedTotal, &status, &createdAt, &version); err != nil {
 			return nil, 0, err
 		}
 		invUUID, _ := uuid.Parse(idStr)
@@ -1001,6 +1057,7 @@ func (r *SQLSalesRepository) ListFacturas(ctx context.Context, empresaID uuid.UU
 			RectifiedTotal:     creditedTotal,
 			Estado:            status,
 			CreatedAt:         createdAt,
+			Version:           version,
 		})
 	}
 	return invoices, total, nil

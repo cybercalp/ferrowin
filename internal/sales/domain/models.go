@@ -26,6 +26,7 @@ type Presupuesto struct {
 	Estado     string            `json:"estado"`
 	FechaValidez time.Time       `json:"fecha_validez"`
 	CreatedAt  time.Time         `json:"created_at"`
+	Version    int               `json:"version"`
 	Lineas     []PresupuestoLinea `json:"lineas,omitempty"`
 }
 
@@ -46,6 +47,7 @@ type Pedido struct {
 	Total      float64         `json:"total"`
 	Estado     string          `json:"estado"`
 	CreatedAt  time.Time       `json:"created_at"`
+	Version    int             `json:"version"`
 	Lineas     []PedidoLinea   `json:"lineas,omitempty"`
 }
 
@@ -66,6 +68,7 @@ type Albaran struct {
 	Estado     string          `json:"estado"`
 	AlmacenID  uuid.UUID       `json:"almacen_id"`
 	CreatedAt  time.Time       `json:"created_at"`
+	Version    int             `json:"version"`
 	Lineas     []AlbaranLinea  `json:"lineas,omitempty"`
 }
 
@@ -90,6 +93,7 @@ type Factura struct {
 	RectifiedTotal   float64         `json:"rectified_total"`
 	Estado           string          `json:"estado"`
 	CreatedAt        time.Time       `json:"created_at"`
+	Version          int             `json:"version"`
 	Lineas           []FacturaLinea  `json:"lineas,omitempty"`
 }
 

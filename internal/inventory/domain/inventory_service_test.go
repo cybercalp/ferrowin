@@ -26,7 +26,7 @@ func setupInventoryTestDB(t *testing.T) (*sql.DB, func()) {
 			item_id TEXT NOT NULL,
 			warehouse_id TEXT NOT NULL,
 			quantity REAL NOT NULL,
-			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT', 'TRANSFER')),
+			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT', 'TRANSFER', 'RETURN')),
 			reference_document_type TEXT,
 			reference_document_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP

@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -124,6 +125,32 @@ func (s *InventoryService) RecordReturn(ctx context.Context, itemID, warehouseID
 		return nil, err
 	}
 	return entry, nil
+}
+
+// WithdrawalItem represents a single item for batch withdrawal processing.
+type WithdrawalItem struct {
+	ItemID      uuid.UUID
+	WarehouseID uuid.UUID
+	Qty         float64
+}
+
+// RecordWithdrawals performs multiple stock withdrawals atomically.
+// On partial failure, it compensates by recording returns for all successful entries.
+// On success, it returns all recorded entries.
+func (s *InventoryService) RecordWithdrawals(ctx context.Context, items []WithdrawalItem, refDocType *string, refDocID *uuid.UUID) ([]*StockLedgerEntry, error) {
+	var successful []*StockLedgerEntry
+	for _, item := range items {
+		entry, err := s.RecordWithdrawal(ctx, item.ItemID, item.WarehouseID, item.Qty, refDocType, refDocID)
+		if err != nil {
+			// Compensate: roll back all successful withdrawals
+			for _, e := range successful {
+				_, _ = s.RecordReturn(ctx, e.ItemID, e.WarehouseID, -e.Quantity, e.ReferenceDocumentType, e.ReferenceDocumentID)
+			}
+			return nil, fmt.Errorf("failed to deduct stock for product %s: %w", item.ItemID, err)
+		}
+		successful = append(successful, entry)
+	}
+	return successful, nil
 }
 
 // RecordSyncAdjustment records an offline TPV sales sync adjustment (deduction of stock).
