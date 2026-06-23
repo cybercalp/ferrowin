@@ -1082,6 +1082,28 @@ pub fn get_all_clientes(conn: &Connection) -> Result<Vec<Cliente>> {
     rows.collect()
 }
 
+pub fn upsert_cliente(conn: &Connection, item: &Cliente) -> Result<()> {
+    conn.execute(
+        "INSERT INTO clientes (id, nombre, nif, email, updated_at, activo)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET
+             nombre = excluded.nombre,
+             nif = excluded.nif,
+             email = excluded.email,
+             updated_at = excluded.updated_at,
+             activo = excluded.activo",
+        params![
+            item.id,
+            item.nombre,
+            item.nif,
+            item.email,
+            item.updated_at,
+            item.activo as i32,
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn search_clientes(conn: &Connection, query: &str) -> Result<Vec<CustomerInfo>> {
     let pattern = format!("%{}%", query);
     let mut stmt = conn.prepare(

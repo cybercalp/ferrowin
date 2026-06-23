@@ -94,6 +94,11 @@ pub async fn sync_catalog_delta(db_path: &str, backend_url: &str, token: Option<
             .map_err(|e| format!("Failed to upsert producto: {}", e))?;
     }
 
+    for item in sync_data.clientes.iter().flatten() {
+        db::upsert_cliente(&tx, item)
+            .map_err(|e| format!("Failed to upsert cliente: {}", e))?;
+    }
+
     // Process deactivated/deleted items
     for id in sync_data.eliminados.iter().flat_map(|e| e.tipos_iva.iter()).flatten() {
         db::deactivate_tipo_iva(&tx, id)
