@@ -319,18 +319,28 @@ func (r *SQLPurchaseRepository) SavePurchaseOrder(ctx context.Context, o *domain
 
 	var qOrder string
 	if r.isSQLite {
-		qOrder = `INSERT INTO pedidos_compra (id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total`
+		qOrder = `INSERT INTO pedidos_compra (id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total, version) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, total=excluded.total, version=excluded.version + 1
+                  WHERE version = excluded.version`
 	} else {
-		qOrder = `INSERT INTO pedidos_compra (id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total) 
-                  VALUES ($1, $2, $3, $4, $5, $6, $7)
-                  ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total`
+		qOrder = `INSERT INTO pedidos_compra (id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total, version) 
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                  ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, total=EXCLUDED.total, version=EXCLUDED.version + 1
+                  WHERE pedidos_compra.version = EXCLUDED.version`
 	}
 
-	_, err = tx.ExecContext(ctx, qOrder, o.ID.String(), o.EmpresaID.String(), o.ProveedorID.String(), o.NumeroPedido, o.Fecha.UTC(), o.Estado, o.Total)
+	result, err := tx.ExecContext(ctx, qOrder, o.ID.String(), o.EmpresaID.String(), o.ProveedorID.String(), o.NumeroPedido, o.Fecha.UTC(), o.Estado, o.Total, o.Version)
 	if err != nil {
 		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrConcurrentModification
 	}
 
 	// Delete existing lines if updating
@@ -348,14 +358,14 @@ func (r *SQLPurchaseRepository) SavePurchaseOrder(ctx context.Context, o *domain
 	// Insert lines
 	var qLine string
 	if r.isSQLite {
-		qLine = `INSERT INTO pedido_compra_lineas (id, pedido_compra_id, producto_id, cantidad, precio_unitario) 
-                 VALUES (?, ?, ?, ?, ?)`
+		qLine = `INSERT INTO pedido_compra_lineas (id, pedido_compra_id, producto_id, cantidad, precio_unitario, recibido) 
+                 VALUES (?, ?, ?, ?, ?, ?)`
 	} else {
-		qLine = `INSERT INTO pedido_compra_lineas (id, pedido_compra_id, producto_id, cantidad, precio_unitario) 
-                 VALUES ($1, $2, $3, $4, $5)`
+		qLine = `INSERT INTO pedido_compra_lineas (id, pedido_compra_id, producto_id, cantidad, precio_unitario, recibido) 
+                 VALUES ($1, $2, $3, $4, $5, $6)`
 	}
 	for _, l := range o.Lineas {
-		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.PedidoCompraID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario)
+		_, err = tx.ExecContext(ctx, qLine, l.ID.String(), l.PedidoCompraID.String(), l.ProductoID.String(), l.Cantidad, l.PrecioUnitario, l.Recibido)
 		if err != nil {
 			return err
 		}
@@ -367,16 +377,17 @@ func (r *SQLPurchaseRepository) SavePurchaseOrder(ctx context.Context, o *domain
 func (r *SQLPurchaseRepository) GetPurchaseOrder(ctx context.Context, id uuid.UUID) (*domain.PedidoCompra, error) {
 	var qOrder string
 	if r.isSQLite {
-		qOrder = `SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total FROM pedidos_compra WHERE id = ?`
+		qOrder = `SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total, version FROM pedidos_compra WHERE id = ?`
 	} else {
-		qOrder = `SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total FROM pedidos_compra WHERE id = $1`
+		qOrder = `SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total, version FROM pedidos_compra WHERE id = $1`
 	}
 
 	var idStr, empIDStr, provIDStr, numeroPedido, estado string
 	var fecha time.Time
 	var total float64
+	var version int
 
-	err := r.db.QueryRowContext(ctx, qOrder, id.String()).Scan(&idStr, &empIDStr, &provIDStr, &numeroPedido, &fecha, &estado, &total)
+	err := r.db.QueryRowContext(ctx, qOrder, id.String()).Scan(&idStr, &empIDStr, &provIDStr, &numeroPedido, &fecha, &estado, &total, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrPurchaseOrderNotFound
 	} else if err != nil {
@@ -386,9 +397,9 @@ func (r *SQLPurchaseRepository) GetPurchaseOrder(ctx context.Context, id uuid.UU
 	// Fetch lines
 	var qLines string
 	if r.isSQLite {
-		qLines = `SELECT id, pedido_compra_id, producto_id, cantidad, precio_unitario FROM pedido_compra_lineas WHERE pedido_compra_id = ?`
+		qLines = `SELECT id, pedido_compra_id, producto_id, cantidad, precio_unitario, recibido FROM pedido_compra_lineas WHERE pedido_compra_id = ?`
 	} else {
-		qLines = `SELECT id, pedido_compra_id, producto_id, cantidad, precio_unitario FROM pedido_compra_lineas WHERE pedido_compra_id = $1`
+		qLines = `SELECT id, pedido_compra_id, producto_id, cantidad, precio_unitario, recibido FROM pedido_compra_lineas WHERE pedido_compra_id = $1`
 	}
 	rows, err := r.db.QueryContext(ctx, qLines, id.String())
 	if err != nil {
@@ -399,8 +410,8 @@ func (r *SQLPurchaseRepository) GetPurchaseOrder(ctx context.Context, id uuid.UU
 	var lines []domain.PedidoCompraLinea
 	for rows.Next() {
 		var lIDStr, poIDStr, prodIDStr string
-		var qty, price float64
-		if err := rows.Scan(&lIDStr, &poIDStr, &prodIDStr, &qty, &price); err != nil {
+		var qty, price, recibido float64
+		if err := rows.Scan(&lIDStr, &poIDStr, &prodIDStr, &qty, &price, &recibido); err != nil {
 			return nil, err
 		}
 		lUUID, _ := uuid.Parse(lIDStr)
@@ -412,6 +423,7 @@ func (r *SQLPurchaseRepository) GetPurchaseOrder(ctx context.Context, id uuid.UU
 			ProductoID:     prodUUID,
 			Cantidad:       qty,
 			PrecioUnitario: price,
+			Recibido:       recibido,
 		})
 	}
 
@@ -427,6 +439,7 @@ func (r *SQLPurchaseRepository) GetPurchaseOrder(ctx context.Context, id uuid.UU
 		Fecha:        fecha,
 		Estado:       estado,
 		Total:        total,
+		Version:      version,
 		Lineas:       lines,
 	}, nil
 }
@@ -483,9 +496,9 @@ func (r *SQLPurchaseRepository) ListPurchaseOrders(ctx context.Context, empresaI
 	// Data query
 	var dataQuery string
 	if r.isSQLite {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total FROM pedidos_compra %s ORDER BY fecha DESC LIMIT ? OFFSET ?", where)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total, version FROM pedidos_compra %s ORDER BY fecha DESC LIMIT ? OFFSET ?", where)
 	} else {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total FROM pedidos_compra %s ORDER BY fecha DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, proveedor_id, numero_pedido, fecha, estado, total, version FROM pedidos_compra %s ORDER BY fecha DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
 	}
 	dataArgs := append(args, pageSize, offset)
 
@@ -500,7 +513,8 @@ func (r *SQLPurchaseRepository) ListPurchaseOrders(ctx context.Context, empresaI
 		var idStr, empIDStr, provIDStr, numeroPedido, estado string
 		var fecha time.Time
 		var total float64
-		if err := rows.Scan(&idStr, &empIDStr, &provIDStr, &numeroPedido, &fecha, &estado, &total); err != nil {
+		var version int
+		if err := rows.Scan(&idStr, &empIDStr, &provIDStr, &numeroPedido, &fecha, &estado, &total, &version); err != nil {
 			return nil, 0, err
 		}
 		poUUID, _ := uuid.Parse(idStr)
@@ -514,6 +528,7 @@ func (r *SQLPurchaseRepository) ListPurchaseOrders(ctx context.Context, empresaI
 			Fecha:        fecha,
 			Estado:       estado,
 			Total:        total,
+			Version:      version,
 		})
 	}
 	return orders, total, nil
@@ -535,16 +550,18 @@ func (r *SQLPurchaseRepository) SavePurchaseReceipt(ctx context.Context, receipt
 	}
 
 	if r.isSQLite {
-		qReceipt = `INSERT INTO recepciones_compra (id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET estado=excluded.estado`
+		qReceipt = `INSERT INTO recepciones_compra (id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id, version) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET estado=excluded.estado, version=excluded.version + 1
+                    WHERE version = excluded.version`
 	} else {
-		qReceipt = `INSERT INTO recepciones_compra (id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id) 
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado`
+		qReceipt = `INSERT INTO recepciones_compra (id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id, version) 
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ON CONFLICT(id) DO UPDATE SET estado=EXCLUDED.estado, version=EXCLUDED.version + 1
+                    WHERE recepciones_compra.version = EXCLUDED.version`
 	}
 
-	_, err = tx.ExecContext(ctx, qReceipt,
+	result, err := tx.ExecContext(ctx, qReceipt,
 		receipt.ID.String(),
 		receipt.EmpresaID.String(),
 		poIDVal,
@@ -553,9 +570,18 @@ func (r *SQLPurchaseRepository) SavePurchaseReceipt(ctx context.Context, receipt
 		receipt.Fecha.UTC(),
 		receipt.Estado,
 		receipt.WarehouseID.String(),
+		receipt.Version,
 	)
 	if err != nil {
 		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrConcurrentModification
 	}
 
 	// Delete existing lines if updating
@@ -592,16 +618,17 @@ func (r *SQLPurchaseRepository) SavePurchaseReceipt(ctx context.Context, receipt
 func (r *SQLPurchaseRepository) GetPurchaseReceipt(ctx context.Context, id uuid.UUID) (*domain.RecepcionCompra, error) {
 	var qReceipt string
 	if r.isSQLite {
-		qReceipt = `SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id FROM recepciones_compra WHERE id = ?`
+		qReceipt = `SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id, version FROM recepciones_compra WHERE id = ?`
 	} else {
-		qReceipt = `SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id FROM recepciones_compra WHERE id = $1`
+		qReceipt = `SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id, version FROM recepciones_compra WHERE id = $1`
 	}
 
 	var idStr, empIDStr, provIDStr, numeroAlbaran, estado, whIDStr string
 	var poIDStr sql.NullString
 	var fecha time.Time
+	var version int
 
-	err := r.db.QueryRowContext(ctx, qReceipt, id.String()).Scan(&idStr, &empIDStr, &poIDStr, &provIDStr, &numeroAlbaran, &fecha, &estado, &whIDStr)
+	err := r.db.QueryRowContext(ctx, qReceipt, id.String()).Scan(&idStr, &empIDStr, &poIDStr, &provIDStr, &numeroAlbaran, &fecha, &estado, &whIDStr, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrPurchaseReceiptNotFound
 	} else if err != nil {
@@ -660,6 +687,7 @@ func (r *SQLPurchaseRepository) GetPurchaseReceipt(ctx context.Context, id uuid.
 		Fecha:          fecha,
 		Estado:         estado,
 		WarehouseID:    whUUID,
+		Version:        version,
 		Lineas:         lines,
 	}, nil
 }
@@ -710,9 +738,9 @@ func (r *SQLPurchaseRepository) ListPurchaseReceipts(ctx context.Context, empres
 
 	var dataQuery string
 	if r.isSQLite {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id FROM recepciones_compra %s ORDER BY fecha DESC LIMIT ? OFFSET ?", where)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id, version FROM recepciones_compra %s ORDER BY fecha DESC LIMIT ? OFFSET ?", where)
 	} else {
-		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id FROM recepciones_compra %s ORDER BY fecha DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
+		dataQuery = fmt.Sprintf("SELECT id, empresa_id, pedido_compra_id, proveedor_id, numero_albaran, fecha, estado, warehouse_id, version FROM recepciones_compra %s ORDER BY fecha DESC LIMIT $%d OFFSET $%d", where, argIdx, argIdx+1)
 	}
 	dataArgs := append(args, pageSize, offset)
 
@@ -727,7 +755,8 @@ func (r *SQLPurchaseRepository) ListPurchaseReceipts(ctx context.Context, empres
 		var idStr, empIDStr, provIDStr, numeroAlbaran, estado, whIDStr string
 		var poIDStr sql.NullString
 		var fecha time.Time
-		if err := rows.Scan(&idStr, &empIDStr, &poIDStr, &provIDStr, &numeroAlbaran, &fecha, &estado, &whIDStr); err != nil {
+		var version int
+		if err := rows.Scan(&idStr, &empIDStr, &poIDStr, &provIDStr, &numeroAlbaran, &fecha, &estado, &whIDStr, &version); err != nil {
 			return nil, 0, err
 		}
 		rcUUID, _ := uuid.Parse(idStr)
@@ -750,7 +779,36 @@ func (r *SQLPurchaseRepository) ListPurchaseReceipts(ctx context.Context, empres
 			Fecha:          fecha,
 			Estado:         estado,
 			WarehouseID:    whUUID,
+			Version:        version,
 		})
 	}
 	return receipts, total, nil
+}
+
+func (r *SQLPurchaseRepository) SaveEvento(ctx context.Context, evento *domain.RegistroEvento) error {
+	var query string
+	if r.isSQLite {
+		query = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, usuario_id, detalles, created_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	} else {
+		query = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, usuario_id, detalles, created_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	}
+
+	var usuarioIDVal interface{}
+	if evento.UsuarioID != nil {
+		usuarioIDVal = evento.UsuarioID.String()
+	}
+
+	_, err := r.db.ExecContext(ctx, query,
+		evento.ID.String(),
+		evento.DocumentoTipo,
+		evento.DocumentoID.String(),
+		evento.EmpresaID.String(),
+		evento.Accion,
+		usuarioIDVal,
+		evento.Detalles,
+		evento.CreatedAt.UTC(),
+	)
+	return err
 }

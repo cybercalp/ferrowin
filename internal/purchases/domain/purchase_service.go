@@ -18,6 +18,7 @@ var (
 	ErrPurchaseReceiptNotFound  = errors.New("purchase receipt not found")
 	ErrTenantMismatch           = errors.New("tenant company mismatch")
 	ErrInvalidStatus            = errors.New("invalid status transition")
+	ErrConcurrentModification   = errors.New("concurrent modification detected, please retry")
 )
 
 // PurchaseOrderFilter holds optional filter fields for listing purchase orders.
@@ -87,11 +88,14 @@ type PurchaseRepository interface {
 	GetPurchaseReceipt(ctx context.Context, id uuid.UUID) (*RecepcionCompra, error)
 	ListPurchaseReceipts(ctx context.Context, empresaID uuid.UUID, filter PurchaseReceiptFilter) ([]*RecepcionCompra, int, error)
 	CancelPurchaseReceipt(ctx context.Context, id uuid.UUID) error
+
+	SaveEvento(ctx context.Context, evento *RegistroEvento) error
 }
 
 type PurchaseService struct {
 	repo       PurchaseRepository
 	invService *inventorydomain.InventoryService
+	Now        func() time.Time
 }
 
 func NewPurchaseService(repo PurchaseRepository, invService *inventorydomain.InventoryService) *PurchaseService {
@@ -99,6 +103,28 @@ func NewPurchaseService(repo PurchaseRepository, invService *inventorydomain.Inv
 		repo:       repo,
 		invService: invService,
 	}
+}
+
+func (s *PurchaseService) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+// recordEvento is a best-effort audit trail helper.
+func (s *PurchaseService) recordEvento(ctx context.Context, empresaID uuid.UUID, docTipo string, docID uuid.UUID, accion string, usuarioID *uuid.UUID, detalles string) {
+	evento := &RegistroEvento{
+		ID:            uuid.New(),
+		DocumentoTipo: docTipo,
+		DocumentoID:   docID,
+		EmpresaID:     empresaID,
+		Accion:        accion,
+		UsuarioID:     usuarioID,
+		Detalles:      detalles,
+		CreatedAt:     s.now(),
+	}
+	s.repo.SaveEvento(ctx, evento) // best-effort — ignore error
 }
 
 // Company & Warehouse
@@ -178,13 +204,17 @@ func (s *PurchaseService) CancelPurchaseOrder(ctx context.Context, empresaID, or
 	if po.EmpresaID != empresaID {
 		return ErrTenantMismatch
 	}
-	if po.Estado == "Cancelado" {
+	if po.Estado == PurchaseStatusCancelado {
 		return fmt.Errorf("%w: purchase order is already cancelled", ErrInvalidStatus)
 	}
-	if po.Estado == "Recibido" {
+	if po.Estado == PurchaseStatusRecibido {
 		return fmt.Errorf("%w: cannot cancel a received purchase order", ErrInvalidStatus)
 	}
-	return s.repo.CancelPurchaseOrder(ctx, orderID)
+	if err := s.repo.CancelPurchaseOrder(ctx, orderID); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "pedido_compra", orderID, "anular", nil, "")
+	return nil
 }
 
 func (s *PurchaseService) CancelPurchaseReceipt(ctx context.Context, empresaID, receiptID uuid.UUID) error {
@@ -195,17 +225,42 @@ func (s *PurchaseService) CancelPurchaseReceipt(ctx context.Context, empresaID, 
 	if rc.EmpresaID != empresaID {
 		return ErrTenantMismatch
 	}
-	if rc.Estado == "Cancelado" {
+	if rc.Estado == ReceiptStatusCancelado {
 		return fmt.Errorf("%w: purchase receipt is already cancelled", ErrInvalidStatus)
 	}
-	if rc.Estado == "Procesado" {
-		return fmt.Errorf("%w: cannot cancel a processed purchase receipt", ErrInvalidStatus)
+
+	// Reverse stock if receipt was already processed
+	if rc.Estado == ReceiptStatusProcesado {
+		refDocType := "PURCHASE_RECEIPT"
+		for _, l := range rc.Lineas {
+			_, err := s.invService.RecordReturn(ctx, l.ProductoID, rc.WarehouseID, l.Cantidad, &refDocType, &rc.ID)
+			if err != nil {
+				return fmt.Errorf("failed to reverse stock for product %s: %w", l.ProductoID, err)
+			}
+		}
 	}
-	return s.repo.CancelPurchaseReceipt(ctx, receiptID)
+
+	if err := s.repo.CancelPurchaseReceipt(ctx, receiptID); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "recepcion_compra", receiptID, "anular", nil, "")
+	return nil
 }
 
 // Purchase Order
 func (s *PurchaseService) CreatePurchaseOrder(ctx context.Context, empresaID, proveedorID uuid.UUID, numeroPedido string, lines []PedidoCompraLinea) (*PedidoCompra, error) {
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("at least one line is required")
+	}
+	for i, l := range lines {
+		if l.Cantidad <= 0 {
+			return nil, fmt.Errorf("line %d: cantidad must be positive", i)
+		}
+		if l.PrecioUnitario < 0 {
+			return nil, fmt.Errorf("line %d: precio_unitario must be non-negative", i)
+		}
+	}
+
 	// Validate supplier belongs to the same company
 	prov, err := s.repo.GetSupplier(ctx, proveedorID)
 	if err != nil {
@@ -234,8 +289,8 @@ func (s *PurchaseService) CreatePurchaseOrder(ctx context.Context, empresaID, pr
 		EmpresaID:    empresaID,
 		ProveedorID:  proveedorID,
 		NumeroPedido: numeroPedido,
-		Fecha:        time.Now(),
-		Estado:       "Borrador",
+		Fecha:        s.now(),
+		Estado:       PurchaseStatusBorrador,
 		Total:        total,
 		Lineas:       poLines,
 	}
@@ -243,6 +298,7 @@ func (s *PurchaseService) CreatePurchaseOrder(ctx context.Context, empresaID, pr
 	if err := s.repo.SavePurchaseOrder(ctx, po); err != nil {
 		return nil, err
 	}
+	s.recordEvento(ctx, empresaID, "pedido_compra", poID, "crear", nil, "")
 	return po, nil
 }
 
@@ -262,12 +318,16 @@ func (s *PurchaseService) ApprovePurchaseOrder(ctx context.Context, empresaID, o
 	if po.EmpresaID != empresaID {
 		return ErrTenantMismatch
 	}
-	if po.Estado != "Borrador" {
+	if po.Estado != PurchaseStatusBorrador {
 		return fmt.Errorf("%w: cannot approve from %s state", ErrInvalidStatus, po.Estado)
 	}
 
-	po.Estado = "Aprobado"
-	return s.repo.SavePurchaseOrder(ctx, po)
+	po.Estado = PurchaseStatusAprobado
+	if err := s.repo.SavePurchaseOrder(ctx, po); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "pedido_compra", orderID, "aprobar", nil, "")
+	return nil
 }
 
 func (s *PurchaseService) ListPurchaseOrders(ctx context.Context, empresaID uuid.UUID, filter PurchaseOrderFilter) ([]*PedidoCompra, int, error) {
@@ -282,6 +342,18 @@ func (s *PurchaseService) ListPurchaseReceipts(ctx context.Context, empresaID uu
 
 // Purchase Receipt
 func (s *PurchaseService) CreatePurchaseReceipt(ctx context.Context, empresaID, supplierID uuid.UUID, poID *uuid.UUID, numeroAlbaran string, warehouseID uuid.UUID, lines []RecepcionCompraLinea) (*RecepcionCompra, error) {
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("at least one line is required")
+	}
+	for i, l := range lines {
+		if l.Cantidad <= 0 {
+			return nil, fmt.Errorf("line %d: cantidad must be positive", i)
+		}
+		if l.PrecioUnitario < 0 {
+			return nil, fmt.Errorf("line %d: precio_unitario must be non-negative", i)
+		}
+	}
+
 	// Validate supplier
 	prov, err := s.repo.GetSupplier(ctx, supplierID)
 	if err != nil {
@@ -298,6 +370,17 @@ func (s *PurchaseService) CreatePurchaseReceipt(ctx context.Context, empresaID, 
 	}
 	if wh.EmpresaID != empresaID {
 		return nil, ErrTenantMismatch
+	}
+
+	// Validate PO status if linked
+	if poID != nil {
+		po, err := s.repo.GetPurchaseOrder(ctx, *poID)
+		if err != nil {
+			return nil, fmt.Errorf("purchase order not found: %w", err)
+		}
+		if po.Estado != PurchaseStatusAprobado {
+			return nil, fmt.Errorf("%w: cannot create receipt against a purchase order in %s status", ErrInvalidStatus, po.Estado)
+		}
 	}
 
 	receiptID := uuid.New()
@@ -318,8 +401,8 @@ func (s *PurchaseService) CreatePurchaseReceipt(ctx context.Context, empresaID, 
 		PedidoCompraID: poID,
 		ProveedorID:    supplierID,
 		NumeroAlbaran:  numeroAlbaran,
-		Fecha:          time.Now(),
-		Estado:         "Borrador",
+		Fecha:          s.now(),
+		Estado:         ReceiptStatusBorrador,
 		WarehouseID:    warehouseID,
 		Lineas:         rcLines,
 	}
@@ -327,6 +410,7 @@ func (s *PurchaseService) CreatePurchaseReceipt(ctx context.Context, empresaID, 
 	if err := s.repo.SavePurchaseReceipt(ctx, rc); err != nil {
 		return nil, err
 	}
+	s.recordEvento(ctx, empresaID, "recepcion_compra", receiptID, "crear", nil, "")
 	return rc, nil
 }
 
@@ -338,7 +422,7 @@ func (s *PurchaseService) ProcessPurchaseReceipt(ctx context.Context, empresaID,
 	if rc.EmpresaID != empresaID {
 		return ErrTenantMismatch
 	}
-	if rc.Estado != "Borrador" {
+	if rc.Estado != ReceiptStatusBorrador {
 		return fmt.Errorf("%w: cannot process receipt from %s state", ErrInvalidStatus, rc.Estado)
 	}
 
@@ -351,19 +435,43 @@ func (s *PurchaseService) ProcessPurchaseReceipt(ctx context.Context, empresaID,
 		}
 	}
 
-	rc.Estado = "Procesado"
+	rc.Estado = ReceiptStatusProcesado
 	if err := s.repo.SavePurchaseReceipt(ctx, rc); err != nil {
 		return err
 	}
 
-	// If linked to a purchase order, transition the purchase order status to 'Recibido'
+	// If linked to a purchase order, update partial receipt tracking
 	if rc.PedidoCompraID != nil {
 		po, err := s.repo.GetPurchaseOrder(ctx, *rc.PedidoCompraID)
 		if err == nil && po != nil {
-			po.Estado = "Recibido"
+			// Update each PO line's Recibido quantity
+			for _, rcLine := range rc.Lineas {
+				for i, poLine := range po.Lineas {
+					if poLine.ProductoID == rcLine.ProductoID {
+						po.Lineas[i].Recibido += rcLine.Cantidad
+						break
+					}
+				}
+			}
+
+			// Determine new PO status based on receipt progress
+			allReceived := true
+			for _, l := range po.Lineas {
+				if l.Recibido < l.Cantidad {
+					allReceived = false
+					break
+				}
+			}
+			if allReceived {
+				po.Estado = PurchaseStatusRecibido
+			} else {
+				po.Estado = PurchaseStatusParcial
+			}
+
 			_ = s.repo.SavePurchaseOrder(ctx, po) // soft error if po update fails
 		}
 	}
 
+	s.recordEvento(ctx, empresaID, "recepcion_compra", receiptID, "procesar", nil, "")
 	return nil
 }

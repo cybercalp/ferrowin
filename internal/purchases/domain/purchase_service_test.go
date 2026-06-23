@@ -149,6 +149,10 @@ func (m *mockPurchaseRepository) ListPurchaseReceipts(ctx context.Context, empre
 	return nil, 0, nil
 }
 
+func (m *mockPurchaseRepository) SaveEvento(ctx context.Context, evento *RegistroEvento) error {
+	return nil
+}
+
 type mockStockLedgerRepository struct {
 	saveFunc             func(ctx context.Context, entry *inventorydomain.StockLedgerEntry) error
 	getMovementsFunc     func(ctx context.Context, itemID, warehouseID uuid.UUID) ([]*inventorydomain.StockLedgerEntry, error)
@@ -465,7 +469,10 @@ func TestCreatePurchaseOrder(t *testing.T) {
 		}
 		svc := NewPurchaseService(repo, nil)
 
-		_, err := svc.CreatePurchaseOrder(ctx, empresaID, proveedorID, "PO-002", nil)
+		lines := []PedidoCompraLinea{
+			{ProductoID: uuid.New(), Cantidad: 1, PrecioUnitario: 10.0},
+		}
+		_, err := svc.CreatePurchaseOrder(ctx, empresaID, proveedorID, "PO-002", lines)
 		if !errors.Is(err, ErrTenantMismatch) {
 			t.Fatalf("expected ErrTenantMismatch, got %v", err)
 		}
@@ -558,6 +565,9 @@ func TestCreatePurchaseReceipt(t *testing.T) {
 			getWarehouseFunc: func(ctx context.Context, id uuid.UUID) (*Warehouse, error) {
 				return wh, nil
 			},
+			getPurchaseOrderFunc: func(ctx context.Context, id uuid.UUID) (*PedidoCompra, error) {
+				return &PedidoCompra{ID: id, EmpresaID: empresaID, Estado: PurchaseStatusAprobado}, nil
+			},
 			savePurchaseReceiptFunc: func(ctx context.Context, r *RecepcionCompra) error {
 				return nil
 			},
@@ -628,7 +638,10 @@ func TestCreatePurchaseReceipt(t *testing.T) {
 		}
 		svc := NewPurchaseService(repo, nil)
 
-		_, err := svc.CreatePurchaseReceipt(ctx, empresaID, supplierID, nil, "ALB-002", warehouseID, nil)
+		lines := []RecepcionCompraLinea{
+			{ProductoID: uuid.New(), Cantidad: 1, PrecioUnitario: 5.0},
+		}
+		_, err := svc.CreatePurchaseReceipt(ctx, empresaID, supplierID, nil, "ALB-002", warehouseID, lines)
 		if !errors.Is(err, ErrTenantMismatch) {
 			t.Fatalf("expected ErrTenantMismatch, got %v", err)
 		}
@@ -647,7 +660,10 @@ func TestCreatePurchaseReceipt(t *testing.T) {
 		}
 		svc := NewPurchaseService(repo, nil)
 
-		_, err := svc.CreatePurchaseReceipt(ctx, empresaID, supplierID, nil, "ALB-003", warehouseID, nil)
+		lines := []RecepcionCompraLinea{
+			{ProductoID: uuid.New(), Cantidad: 1, PrecioUnitario: 5.0},
+		}
+		_, err := svc.CreatePurchaseReceipt(ctx, empresaID, supplierID, nil, "ALB-003", warehouseID, lines)
 		if !errors.Is(err, ErrTenantMismatch) {
 			t.Fatalf("expected ErrTenantMismatch, got %v", err)
 		}

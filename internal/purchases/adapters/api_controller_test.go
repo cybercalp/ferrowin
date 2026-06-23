@@ -76,8 +76,9 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 			proveedor_id TEXT NOT NULL REFERENCES entidades(id) ON DELETE RESTRICT,
 			numero_pedido TEXT NOT NULL,
 			fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
-			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Recibido', 'Cancelado')),
+			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Aprobado', 'Recibido', 'Parcial', 'Cancelado')),
 			total REAL NOT NULL DEFAULT 0.00,
+			version INTEGER NOT NULL DEFAULT 1,
 			UNIQUE(empresa_id, numero_pedido)
 		)`,
 		`CREATE TABLE pedido_compra_lineas (
@@ -85,7 +86,8 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 			pedido_compra_id TEXT NOT NULL REFERENCES pedidos_compra(id) ON DELETE CASCADE,
 			producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
 			cantidad REAL NOT NULL,
-			precio_unitario REAL NOT NULL
+			precio_unitario REAL NOT NULL,
+			recibido REAL NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE recepciones_compra (
 			id TEXT PRIMARY KEY,
@@ -96,6 +98,7 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 			fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
 			estado TEXT NOT NULL CHECK (estado IN ('Borrador', 'Procesado', 'Cancelado')),
 			warehouse_id TEXT NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+			version INTEGER NOT NULL DEFAULT 1,
 			UNIQUE(empresa_id, numero_albaran)
 		)`,
 		`CREATE TABLE recepcion_compra_lineas (
@@ -110,9 +113,19 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 			item_id TEXT NOT NULL,
 			warehouse_id TEXT NOT NULL REFERENCES warehouses(id),
 			quantity REAL NOT NULL,
-			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT')),
+			movement_type TEXT NOT NULL CHECK (movement_type IN ('RECEIPT', 'WITHDRAWAL', 'SYNC_ADJUSTMENT', 'RETURN')),
 			reference_document_type TEXT,
 			reference_document_id TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE registro_eventos (
+			id TEXT PRIMARY KEY,
+			documento_tipo TEXT NOT NULL,
+			documento_id TEXT NOT NULL,
+			empresa_id TEXT NOT NULL,
+			accion TEXT NOT NULL,
+			usuario_id TEXT,
+			detalles TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 	}
