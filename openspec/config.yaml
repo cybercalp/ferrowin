@@ -1,0 +1,39 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Greenfield (unspecified / empty project)
+  Architecture: Not established yet (empty project)
+  Testing: None detected
+  Style: Not established yet
+
+testing:
+  runner: none
+  strict_tdd: false
+  layers: []
+  coverage_tool: none
+  linter: none
+  formatter: none
+  type_checker: none
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

@@ -1,0 +1,9 @@
+.atl/
+ferrowin.exe
+*.exe
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+.vscode/

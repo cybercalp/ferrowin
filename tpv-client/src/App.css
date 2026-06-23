@@ -1,0 +1,1637 @@
+/* ========================================================================
+   TPV UI Facelift — Theme Foundation
+   CSS Custom Properties for light/dark mode, glassmorphism, and keyframes
+   ======================================================================== */
+
+/* ------------------------------------------------------------------------
+   1. CSS Variables — Light Theme (default)
+   ------------------------------------------------------------------------ */
+:root {
+  /* Typography */
+  --font-heading: 'Outfit', sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Surfaces */
+  --bg-page: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --text-placeholder: #94a3b8;
+
+  /* Borders */
+  --border-default: #e2e8f0;
+  --border-input: #cbd5e1;
+
+  /* Accent */
+  --accent-default: #2563eb;
+  --accent-ring: #3b82f6;
+
+  /* Status — Warning */
+  --status-warning-bg: #fffbeb;
+  --status-warning-text: #92400e;
+
+  /* Status — Success */
+  --status-success-bg: #dcfce7;
+  --status-success-text: #166534;
+
+  /* Status — Error / Danger */
+  --status-error-bg: #fee2e2;
+  --status-error-text: #991b1b;
+
+  /* Status — Info */
+  --status-info-bg: #eff6ff;
+  --status-info-text: #1e40af;
+
+  /* Semantic action colors */
+  --color-success: #16a34a;
+  --color-warning: #ea580c;
+  --color-danger: #dc2626;
+
+  /* Glassmorphism */
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-border: rgba(255, 255, 255, 0.18);
+
+  /* Overlay / backdrop */
+  --overlay: rgba(15, 23, 42, 0.4);
+
+  /* Shadow presets */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+  /* Gradient presets */
+  --gradient-hero: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #1d4ed8 100%);
+
+  /* Typography defaults */
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  color: var(--text-primary);
+  background-color: var(--bg-page);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ------------------------------------------------------------------------
+   2. CSS Variables — Dark Theme
+   ------------------------------------------------------------------------ */
+[data-theme="dark"] {
+  /* Surfaces */
+  --bg-page: #0f172a;
+  --bg-card: #1e293b;
+  --bg-elevated: #334155;
+
+  /* Text */
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-placeholder: #64748b;
+
+  /* Borders */
+  --border-default: #334155;
+  --border-input: #475569;
+
+  /* Accent */
+  --accent-default: #3b82f6;
+  --accent-ring: #60a5fa;
+
+  /* Status — Warning */
+  --status-warning-bg: #78350f;
+  --status-warning-text: #fde68a;
+
+  /* Status — Success */
+  --status-success-bg: #064e3b;
+  --status-success-text: #6ee7b7;
+
+  /* Status — Error / Danger */
+  --status-error-bg: #7f1d1d;
+  --status-error-text: #fca5a5;
+
+  /* Status — Info */
+  --status-info-bg: #1e3a5f;
+  --status-info-text: #93c5fd;
+
+  /* Semantic action colors */
+  --color-success: #22c55e;
+  --color-warning: #fb923c;
+  --color-danger: #ef4444;
+
+  /* Glassmorphism */
+  --glass-bg: rgba(30, 41, 59, 0.8);
+  --glass-border: rgba(255, 255, 255, 0.08);
+
+  /* Overlay / backdrop */
+  --overlay: rgba(0, 0, 0, 0.6);
+
+  /* Shadow presets */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+
+  /* Gradient presets */
+  --gradient-hero: linear-gradient(135deg, #0a0f1e 0%, #132347 50%, #1a3a8a 100%);
+
+  /* Background & text fall-through */
+  color: var(--text-primary);
+  background-color: var(--bg-page);
+}
+
+/* ------------------------------------------------------------------------
+   3. Base Element Styles
+   ------------------------------------------------------------------------ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+a {
+  font-weight: 500;
+  color: var(--accent-default);
+  text-decoration: inherit;
+}
+
+a:hover {
+  color: var(--accent-ring);
+}
+
+h1 {
+  text-align: center;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+input,
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-primary);
+  background-color: var(--bg-card);
+  transition: border-color 0.25s, box-shadow 0.25s;
+  box-shadow: var(--shadow-sm);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent-default);
+}
+
+button:active {
+  border-color: var(--accent-ring);
+  background-color: var(--bg-elevated);
+}
+
+input,
+button {
+  outline: none;
+}
+
+/* ------------------------------------------------------------------------
+   4. Layout Utilities (compatibility with existing JSX)
+   ------------------------------------------------------------------------ */
+.container {
+  margin: 0;
+  padding-top: 10vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+}
+
+#greet-input {
+  margin-right: 5px;
+  border: 1px solid var(--border-input);
+}
+
+/* ------------------------------------------------------------------------
+   5. Glassmorphism Template
+   ------------------------------------------------------------------------ */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+}
+
+/* ------------------------------------------------------------------------
+   6. Keyframe Animations
+   ------------------------------------------------------------------------ */
+
+/* Slide in from top (used by warning banners) */
+@keyframes slideInDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Slide out to top */
+@keyframes slideOutUp {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+}
+
+/* Fade in */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Fade out */
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* Pulse (used for sync/status indicators) */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Spin (for loading indicators) */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Utility classes for animations */
+.animate-slide-in {
+  animation: slideInDown 0.3s ease-out;
+}
+
+.animate-slide-out {
+  animation: slideOutUp 0.3s ease-in;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ========================================================================
+   7. POS Layout — 3-column grid (Phase 5)
+   ======================================================================== */
+
+.pos-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px 200px;
+  gap: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px;
+  min-height: calc(100vh - 80px);
+  align-items: start;
+}
+
+.pos-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pos-center {
+  min-width: 0;
+}
+
+.pos-right {
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------------
+   7a. Product Search Bar
+   ------------------------------------------------------------------------ */
+
+.product-search-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid var(--border-input);
+  border-radius: 12px;
+  font-size: 16px;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-input:focus {
+  border-color: var(--accent-default);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.search-spinner {
+  position: absolute;
+  right: 14px;
+  font-size: 20px;
+  animation: spin 0.8s linear infinite;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------------
+   7b. Product Grid — 4-column responsive grid
+   ------------------------------------------------------------------------ */
+
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.product-grid-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-placeholder);
+  font-size: 15px;
+  background-color: var(--bg-card);
+  border-radius: 12px;
+  border: 2px dashed var(--border-input);
+}
+
+.product-card {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  text-align: left;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.product-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent-default);
+}
+
+.product-card:active {
+  transform: translateY(0);
+}
+
+.product-card-image {
+  width: 100%;
+  aspect-ratio: 1;
+  background-color: var(--bg-page);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.product-card-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.product-card-placeholder {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.product-card-info {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.product-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.product-card-code {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.product-card-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent-default);
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------------------
+   7c. Stock Badge — color-coded
+   ------------------------------------------------------------------------ */
+
+.stock-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  width: fit-content;
+  margin-top: 4px;
+}
+
+.stock-ok {
+  background-color: var(--status-success-bg);
+  color: var(--status-success-text);
+}
+
+.stock-low {
+  background-color: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+.stock-empty {
+  background-color: var(--status-error-bg);
+  color: var(--status-error-text);
+}
+
+.stock-unknown {
+  background-color: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------------
+   7d. Cart Panel — right sidebar
+   ------------------------------------------------------------------------ */
+
+.cart-panel {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 112px);
+  box-shadow: var(--shadow-md);
+}
+
+.cart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.cart-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.cart-count {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.cart-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.cart-empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-placeholder);
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------------------
+   7e. Cart Item Row
+   ------------------------------------------------------------------------ */
+
+.cart-item-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 13px;
+}
+
+.cart-item-row:last-child {
+  border-bottom: none;
+}
+
+.cart-item-info {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cart-item-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cart-item-code {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.cart-item-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.qty-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border-input);
+  background-color: var(--bg-page);
+  color: var(--text-secondary);
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: background-color 0.15s;
+}
+
+.qty-btn:hover {
+  background-color: var(--accent-default);
+  color: white;
+  border-color: var(--accent-default);
+}
+
+.qty-value {
+  min-width: 24px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.cart-item-price {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.cart-item-discount {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.discount-input {
+  width: 44px;
+  padding: 2px 4px;
+  border: 1px solid var(--border-input);
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+}
+
+.discount-input:focus {
+  border-color: var(--accent-default);
+  outline: none;
+}
+
+.cart-item-total {
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  text-align: right;
+  min-width: 60px;
+}
+
+.cart-item-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background-color 0.15s;
+  box-shadow: none;
+}
+
+.cart-item-remove:hover {
+  color: var(--color-danger);
+  background-color: var(--status-error-bg);
+  border-color: transparent;
+}
+
+/* ------------------------------------------------------------------------
+   7f. IVA Breakdown
+   ------------------------------------------------------------------------ */
+
+.iva-breakdown {
+  border-top: 2px solid var(--border-default);
+  padding: 12px 16px;
+}
+
+.iva-breakdown-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.iva-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 3px 0;
+  color: var(--text-secondary);
+}
+
+.iva-row-label {
+  flex: 1;
+}
+
+.iva-row-base {
+  text-align: right;
+  min-width: 60px;
+}
+
+.iva-row-tax {
+  text-align: right;
+  min-width: 70px;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------------
+   7g. Cart Totals
+   ------------------------------------------------------------------------ */
+
+.cart-totals {
+  border-top: 2px solid var(--border-default);
+  padding: 12px 16px;
+}
+
+.total-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  padding: 4px 0;
+  color: var(--text-secondary);
+}
+
+.total-discount {
+  color: var(--color-danger);
+}
+
+.total-grand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+  border-top: 1px solid var(--border-default);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------------------
+   7h. Cart Action Buttons
+   ------------------------------------------------------------------------ */
+
+.cart-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-default);
+}
+
+.btn-pay,
+.btn-clear {
+  flex: 1;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.btn-pay {
+  background-color: var(--color-success);
+  color: white;
+}
+
+.btn-pay:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-pay:not(:disabled):hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.btn-clear {
+  background-color: var(--bg-page);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+
+.btn-clear:hover {
+  background-color: var(--status-error-bg);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* ------------------------------------------------------------------------
+   7i. Quick Actions
+   ------------------------------------------------------------------------ */
+
+.quick-actions {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-md);
+}
+
+.quick-actions-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.quick-actions-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quick-action-btn {
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background-color: var(--bg-page);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.quick-action-btn:hover:not(:disabled) {
+  background-color: var(--accent-default);
+  color: white;
+  border-color: var(--accent-default);
+}
+
+.quick-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------------
+   7j. Responsive tweaks for POS layout
+   ------------------------------------------------------------------------ */
+
+@media (max-width: 1100px) {
+  .pos-layout {
+    grid-template-columns: 1fr 320px;
+  }
+  .pos-right {
+    display: none;
+  }
+  .product-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .pos-layout {
+    grid-template-columns: 1fr;
+  }
+  .pos-center {
+    order: -1;
+  }
+  .product-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ========================================================================
+   8. Modal Overlay & Panel (Phase 4)
+   ======================================================================== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.modal-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  width: 90%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--font-heading);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  box-shadow: none;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.modal-close:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-page);
+}
+
+/* ------------------------------------------------------------------------
+   8a. Payment Modal
+   ------------------------------------------------------------------------ */
+
+.payment-modal {
+  max-width: 480px;
+}
+
+.payment-total-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 24px;
+  background: var(--gradient-hero);
+  margin: 0 0 16px;
+  color: white;
+}
+
+.payment-total-label {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+.payment-total-value {
+  font-size: 36px;
+  font-weight: 800;
+  font-family: var(--font-heading);
+}
+
+/* Payment method selector */
+.payment-method-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 24px 24px;
+}
+
+.payment-method-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 2px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-page);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s, background-color 0.2s, transform 0.1s;
+  box-shadow: var(--shadow-sm);
+}
+
+.payment-method-btn:hover {
+  border-color: var(--accent-default);
+  background-color: var(--status-info-bg);
+  transform: translateY(-1px);
+}
+
+.method-icon {
+  font-size: 28px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border-radius: 10px;
+}
+
+.method-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: block;
+}
+
+.method-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 2px;
+}
+
+/* ------------------------------------------------------------------------
+   8b. Cash Payment
+   ------------------------------------------------------------------------ */
+
+.cash-payment,
+.card-payment,
+.split-payment {
+  padding: 0 24px 24px;
+}
+
+.payment-subtitle {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.cash-tender-group {
+  margin-bottom: 16px;
+}
+
+.cash-label,
+.split-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.cash-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.cash-currency {
+  position: absolute;
+  left: 14px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.cash-input {
+  width: 100%;
+  padding: 14px 14px 14px 36px;
+  border: 2px solid var(--border-input);
+  border-radius: 10px;
+  font-size: 22px;
+  font-weight: 700;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  font-family: var(--font-heading);
+}
+
+.cash-input:focus {
+  border-color: var(--accent-default);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: none;
+}
+
+.cash-input::placeholder {
+  color: var(--text-placeholder);
+  font-weight: 400;
+}
+
+/* Quick amount buttons */
+.quick-amounts {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.quick-amount-btn {
+  flex: 1;
+  min-width: 60px;
+  padding: 10px 8px;
+  border: 1px solid var(--border-input);
+  border-radius: 8px;
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  box-shadow: var(--shadow-sm);
+  text-align: center;
+}
+
+.quick-amount-btn:hover {
+  background: var(--accent-default);
+  color: white;
+  border-color: var(--accent-default);
+}
+
+.quick-exact {
+  background: var(--status-info-bg);
+  color: var(--status-info-text);
+  border-color: var(--accent-default);
+}
+
+/* Change display */
+.change-display {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--bg-page);
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+
+.change-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.change-value {
+  font-size: 20px;
+  font-weight: 800;
+  font-family: var(--font-heading);
+}
+
+.change-positive {
+  color: var(--color-success);
+}
+
+.change-negative {
+  color: var(--color-danger);
+}
+
+/* ------------------------------------------------------------------------
+   8c. Card Payment
+   ------------------------------------------------------------------------ */
+
+.card-total-display {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background: var(--bg-page);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.card-total-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.card-total-value {
+  font-size: 24px;
+  font-weight: 800;
+  font-family: var(--font-heading);
+  color: var(--accent-default);
+}
+
+.card-processing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.processing-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border-default);
+  border-top-color: var(--accent-default);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.card-success {
+  text-align: center;
+  padding: 16px;
+  color: var(--color-success);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* ------------------------------------------------------------------------
+   8d. Split Payment
+   ------------------------------------------------------------------------ */
+
+.split-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.split-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.split-tax-info {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  text-align: right;
+}
+
+.split-balance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  background: var(--bg-page);
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+
+.split-balance-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.split-balance-remaining {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.split-ok {
+  color: var(--color-success);
+}
+
+.split-under {
+  color: var(--color-danger);
+}
+
+.split-over {
+  color: var(--color-warning);
+}
+
+/* ------------------------------------------------------------------------
+   8e. Payment Action Buttons
+   ------------------------------------------------------------------------ */
+
+.payment-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.payment-btn-primary,
+.payment-btn-secondary,
+.payment-btn-danger {
+  flex: 1;
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.payment-btn-primary {
+  background: var(--color-success);
+  color: white;
+}
+
+.payment-btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.payment-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.payment-btn-secondary {
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+
+.payment-btn-secondary:hover:not(:disabled) {
+  background: var(--status-error-bg);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.payment-btn-danger {
+  background: var(--color-danger);
+  color: white;
+}
+
+.payment-btn-danger:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.payment-btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ------------------------------------------------------------------------
+   8f. Receipt Preview
+   ------------------------------------------------------------------------ */
+
+.receipt-modal {
+  max-width: 400px;
+}
+
+.receipt-content {
+  padding: 16px 24px;
+  overflow-y: auto;
+  max-height: 55vh;
+}
+
+.receipt-text {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre;
+  margin: 0;
+  background: var(--bg-page);
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+}
+
+.receipt-actions {
+  display: flex;
+  gap: 10px;
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--border-default);
+}
+
+/* ------------------------------------------------------------------------
+   8g. Daily Closure Panel
+   ------------------------------------------------------------------------ */
+
+.closure-modal {
+  max-width: 560px;
+}
+
+.closure-content {
+  padding: 16px 24px 24px;
+}
+
+.closure-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.closure-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  background: var(--bg-page);
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+}
+
+.closure-stat-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.closure-stat-value {
+  font-size: 28px;
+  font-weight: 800;
+  font-family: var(--font-heading);
+  color: var(--text-primary);
+  margin-top: 4px;
+}
+
+.closure-reports {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.closure-report-btn {
+  flex: 1;
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 2px solid var(--border-default);
+  transition: background-color 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.closure-report-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.closure-report-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.x-report {
+  background: var(--status-info-bg);
+  color: var(--status-info-text);
+  border-color: var(--accent-default);
+}
+
+.x-report:hover:not(:disabled) {
+  background: var(--accent-default);
+  color: white;
+}
+
+.z-report {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+  border-color: var(--color-warning);
+}
+
+.z-report:hover:not(:disabled) {
+  background: var(--color-warning);
+  color: white;
+}
+
+/* Cash declaration */
+.closure-cash-declaration {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-page);
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+}
+
+.closure-section-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.closure-cash-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.closure-cash-actions .payment-btn-primary,
+.closure-cash-actions .payment-btn-secondary,
+.closure-cash-actions .payment-btn-danger {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+/* Sales list */
+.closure-sales-list {
+  margin-bottom: 16px;
+}
+
+.closure-no-sales {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px;
+}
+
+.closure-sales-table {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.closure-sales-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.closure-sales-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border-default);
+}
+
+.closure-sales-row:nth-child(even) {
+  background: var(--bg-page);
+}
+
+.closure-message {
+  padding: 10px 14px;
+  background: var(--status-success-bg);
+  color: var(--status-success-text);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------------
+   8h. Terminal Settings Panel
+   ------------------------------------------------------------------------ */
+
+.settings-modal {
+  max-width: 440px;
+}
+
+.settings-content {
+  padding: 16px 24px 24px;
+}
+
+.settings-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-page);
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+}
+
+.settings-section-title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.settings-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 14px;
+}
+
+.settings-field + .settings-field {
+  border-top: 1px solid var(--border-default);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.settings-field-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.settings-field-value {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: monospace;
+}
+
+.settings-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.settings-status {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.status-online {
+  color: var(--color-success);
+}
+
+.status-offline {
+  color: var(--color-danger);
+}
