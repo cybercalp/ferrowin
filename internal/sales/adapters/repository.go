@@ -1254,3 +1254,38 @@ func (r *SQLSalesRepository) ListFacturasRectificativas(ctx context.Context, emp
 func (r *SQLSalesRepository) UpdateFacturaRectifiedTotal(ctx context.Context, invoiceID uuid.UUID, rectifiedTotal float64) error {
 	return r.updateExec(ctx, "facturas", map[string]interface{}{"total_rectificado": rectifiedTotal}, invoiceID, domain.ErrFacturaNotFound)
 }
+
+func (r *SQLSalesRepository) GetRectifiedQuantitiesByInvoice(ctx context.Context, invoiceID uuid.UUID) (map[uuid.UUID]float64, error) {
+	var query string
+	if r.isSQLite {
+		query = `SELECT frl.producto_id, SUM(frl.cantidad)
+				 FROM factura_rectificativa_lineas frl
+				 JOIN facturas_rectificativas fr ON frl.factura_rectificativa_id = fr.id
+				 WHERE fr.invoice_id = ?
+				 GROUP BY frl.producto_id`
+	} else {
+		query = `SELECT frl.producto_id, SUM(frl.cantidad)
+				 FROM factura_rectificativa_lineas frl
+				 JOIN facturas_rectificativas fr ON frl.factura_rectificativa_id = fr.id
+				 WHERE fr.invoice_id = $1
+				 GROUP BY frl.producto_id`
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, invoiceID.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[uuid.UUID]float64)
+	for rows.Next() {
+		var prodIDStr string
+		var totalQty float64
+		if err := rows.Scan(&prodIDStr, &totalQty); err != nil {
+			return nil, err
+		}
+		prodUUID, _ := uuid.Parse(prodIDStr)
+		result[prodUUID] = totalQty
+	}
+	return result, nil
+}

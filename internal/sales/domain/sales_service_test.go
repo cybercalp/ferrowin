@@ -29,6 +29,7 @@ type mockSalesRepository struct {
 	getFacturaRectificativaFunc       func(ctx context.Context, id uuid.UUID) (*FacturaRectificativa, error)
 	listFacturasRectificativasFunc    func(ctx context.Context, empresaID uuid.UUID) ([]FacturaRectificativa, error)
 	updateInvRectTotalFunc            func(ctx context.Context, invoiceID uuid.UUID, rectifiedTotal float64) error
+	getRectifiedQuantitiesFunc        func(ctx context.Context, invoiceID uuid.UUID) (map[uuid.UUID]float64, error)
 }
 
 func (m *mockSalesRepository) SavePresupuesto(ctx context.Context, q *Presupuesto) error {
@@ -133,6 +134,11 @@ func (m *mockSalesRepository) ListFacturasRectificativas(ctx context.Context, em
 func (m *mockSalesRepository) UpdateFacturaRectifiedTotal(ctx context.Context, invoiceID uuid.UUID, rectifiedTotal float64) error {
 	if m.updateInvRectTotalFunc != nil { return m.updateInvRectTotalFunc(ctx, invoiceID, rectifiedTotal) }
 	return nil
+}
+
+func (m *mockSalesRepository) GetRectifiedQuantitiesByInvoice(ctx context.Context, invoiceID uuid.UUID) (map[uuid.UUID]float64, error) {
+	if m.getRectifiedQuantitiesFunc != nil { return m.getRectifiedQuantitiesFunc(ctx, invoiceID) }
+	return nil, nil
 }
 
 type mockSecurityService struct {

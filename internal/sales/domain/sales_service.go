@@ -97,6 +97,7 @@ type SalesRepository interface {
 	GetFacturaRectificativa(ctx context.Context, id uuid.UUID) (*FacturaRectificativa, error)
 	ListFacturasRectificativas(ctx context.Context, empresaID uuid.UUID) ([]FacturaRectificativa, error)
 	UpdateFacturaRectifiedTotal(ctx context.Context, invoiceID uuid.UUID, rectifiedTotal float64) error
+	GetRectifiedQuantitiesByInvoice(ctx context.Context, invoiceID uuid.UUID) (map[uuid.UUID]float64, error)
 }
 
 // ConvertPresupuestoOptions specifies options when converting a quote.
@@ -175,14 +176,35 @@ func (s *SalesService) GetFactura(ctx context.Context, id uuid.UUID) (*Factura, 
 
 // Update and Cancel methods
 func (s *SalesService) UpdatePresupuesto(ctx context.Context, input UpdatePresupuestoInput) error {
+	doc, err := s.repo.GetPresupuesto(ctx, input.ID)
+	if err != nil {
+		return err
+	}
+	if doc.Estado == StatusConverted || doc.Estado == StatusCancelled {
+		return fmt.Errorf("%w: cannot update a %s document", ErrInvalidStatus, doc.Estado)
+	}
 	return s.repo.UpdatePresupuesto(ctx, input)
 }
 
 func (s *SalesService) UpdatePedido(ctx context.Context, input UpdatePedidoInput) error {
+	doc, err := s.repo.GetPedido(ctx, input.ID)
+	if err != nil {
+		return err
+	}
+	if doc.Estado == StatusConverted || doc.Estado == StatusCancelled {
+		return fmt.Errorf("%w: cannot update a %s document", ErrInvalidStatus, doc.Estado)
+	}
 	return s.repo.UpdatePedido(ctx, input)
 }
 
 func (s *SalesService) UpdateAlbaran(ctx context.Context, input UpdateAlbaranInput) error {
+	doc, err := s.repo.GetAlbaran(ctx, input.ID)
+	if err != nil {
+		return err
+	}
+	if doc.Estado == StatusConverted || doc.Estado == StatusCancelled {
+		return fmt.Errorf("%w: cannot update a %s document", ErrInvalidStatus, doc.Estado)
+	}
 	return s.repo.UpdateAlbaran(ctx, input)
 }
 
@@ -263,6 +285,21 @@ func (s *SalesService) CancelFactura(ctx context.Context, empresaID, invoiceID u
 
 // CreatePresupuesto creates a new quote.
 func (s *SalesService) CreatePresupuesto(ctx context.Context, empresaID, clienteID uuid.UUID, expiresAt time.Time, lines []PresupuestoLinea) (*Presupuesto, error) {
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("at least one line is required")
+	}
+	for i, l := range lines {
+		if l.Cantidad <= 0 {
+			return nil, fmt.Errorf("line %d: cantidad must be positive", i)
+		}
+		if l.PrecioUnitario < 0 {
+			return nil, fmt.Errorf("line %d: precio_unitario must be non-negative", i)
+		}
+		if l.CosteUnitario < 0 {
+			return nil, fmt.Errorf("line %d: coste_unitario must be non-negative", i)
+		}
+	}
+
 	qID := uuid.New()
 	var total float64
 	qLines := make([]PresupuestoLinea, len(lines))
@@ -297,6 +334,18 @@ func (s *SalesService) CreatePresupuesto(ctx context.Context, empresaID, cliente
 
 // CreatePedido creates a new order.
 func (s *SalesService) CreatePedido(ctx context.Context, empresaID uuid.UUID, quoteID *uuid.UUID, lines []PedidoLinea) (*Pedido, error) {
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("at least one line is required")
+	}
+	for i, l := range lines {
+		if l.Cantidad <= 0 {
+			return nil, fmt.Errorf("line %d: cantidad must be positive", i)
+		}
+		if l.PrecioUnitario < 0 {
+			return nil, fmt.Errorf("line %d: precio_unitario must be non-negative", i)
+		}
+	}
+
 	oID := uuid.New()
 	var total float64
 	oLines := make([]PedidoLinea, len(lines))
@@ -585,7 +634,13 @@ func (s *SalesService) CreateFacturaRectificativa(ctx context.Context, empresaID
 		return nil, fmt.Errorf("failed to get delivery note for invoice: %w", err)
 	}
 
-	// 3. Validate lines against invoice
+	// 3. Get already-rectified quantities for this invoice
+	rectifiedQtys, err := s.repo.GetRectifiedQuantitiesByInvoice(ctx, invoiceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get rectified quantities: %w", err)
+	}
+
+	// 4. Validate lines against invoice
 	var total float64
 	for _, l := range lines {
 		if l.Cantidad <= 0 {
@@ -598,8 +653,9 @@ func (s *SalesService) CreateFacturaRectificativa(ctx context.Context, empresaID
 		for _, il := range inv.Lineas {
 			if il.ProductoID == l.ProductoID {
 				found = true
-				if l.Cantidad > il.Cantidad {
-					return nil, fmt.Errorf("%w: product %s: rectified %f, invoiced %f", ErrQuantityExceedsFactura, l.ProductoID, l.Cantidad, il.Cantidad)
+				remaining := il.Cantidad - rectifiedQtys[il.ProductoID]
+				if l.Cantidad > remaining {
+					return nil, fmt.Errorf("%w: product %s: rectified %f, remaining %f", ErrQuantityExceedsFactura, l.ProductoID, l.Cantidad, remaining)
 				}
 				break
 			}
@@ -612,7 +668,7 @@ func (s *SalesService) CreateFacturaRectificativa(ctx context.Context, empresaID
 		return nil, errors.New("total de factura rectificativa debe ser positivo")
 	}
 
-	// 4. Generate FR number (shared series with invoices)
+	// 5. Generate FR number (shared series with invoices)
 	if s.billingService == nil {
 		return nil, ErrBillingServiceNil
 	}
@@ -625,7 +681,7 @@ func (s *SalesService) CreateFacturaRectificativa(ctx context.Context, empresaID
 		return nil, fmt.Errorf("failed to generate FR number: %w", err)
 	}
 
-	// 5. Build rectifying invoice
+	// 6. Build rectifying invoice
 	frID := uuid.New()
 	refDocType := "FACTURA_RECTIFICATIVA"
 
@@ -654,7 +710,7 @@ func (s *SalesService) CreateFacturaRectificativa(ctx context.Context, empresaID
 		Lines:          frLines,
 	}
 
-	// 6. Record stock return movements (before saving document so ref ID is available)
+	// 7. Record stock return movements (before saving document so ref ID is available)
 	for _, l := range lines {
 		_, err := s.invService.RecordReturn(ctx, l.ProductoID, dn.AlmacenID, l.Cantidad, &refDocType, &frID)
 		if err != nil {
@@ -662,18 +718,18 @@ func (s *SalesService) CreateFacturaRectificativa(ctx context.Context, empresaID
 		}
 	}
 
-	// 7. Save FR document
+	// 8. Save FR document
 	if err := s.repo.CreateFacturaRectificativa(ctx, fr); err != nil {
 		return nil, err
 	}
 
-	// 8. Update invoice rectified_total
+	// 9. Update invoice rectified_total
 	newRectifiedTotal := inv.RectifiedTotal + total
 	if err := s.repo.UpdateFacturaRectifiedTotal(ctx, invoiceID, newRectifiedTotal); err != nil {
 		return nil, err
 	}
 
-	// 9. If fully rectified, update invoice status
+	// 10. If fully rectified, update invoice status
 	if newRectifiedTotal >= inv.Total {
 		inv.Estado = StatusRectified
 		if err := s.repo.SaveFactura(ctx, inv); err != nil {
