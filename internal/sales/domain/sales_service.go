@@ -98,6 +98,11 @@ type SalesRepository interface {
 	ListFacturasRectificativas(ctx context.Context, empresaID uuid.UUID) ([]FacturaRectificativa, error)
 	UpdateFacturaRectifiedTotal(ctx context.Context, invoiceID uuid.UUID, rectifiedTotal float64) error
 	GetRectifiedQuantitiesByInvoice(ctx context.Context, invoiceID uuid.UUID) (map[uuid.UUID]float64, error)
+
+	SaveEvento(ctx context.Context, evento *RegistroEvento) error
+
+	GetIdempotencyResponse(ctx context.Context, clave string) (string, bool, error)
+	SaveIdempotencyResponse(ctx context.Context, clave string, respuesta string) error
 }
 
 // ConvertPresupuestoOptions specifies options when converting a quote.
@@ -163,6 +168,51 @@ func (s *SalesService) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+// recordEvento is a best-effort audit trail helper.
+func (s *SalesService) recordEvento(ctx context.Context, empresaID uuid.UUID, docTipo string, docID uuid.UUID, accion string, usuarioID *uuid.UUID, detalles string) {
+	evento := &RegistroEvento{
+		ID:            uuid.New(),
+		DocumentoTipo: docTipo,
+		DocumentoID:   docID,
+		EmpresaID:     empresaID,
+		Accion:        accion,
+		UsuarioID:     usuarioID,
+		Detalles:      detalles,
+		CreatedAt:     s.now(),
+	}
+	s.repo.SaveEvento(ctx, evento) // best-effort — ignore error
+}
+
+// ApprovePresupuesto transitions a Draft quote to Approved status.
+func (s *SalesService) ApprovePresupuesto(ctx context.Context, empresaID, quoteID uuid.UUID) error {
+	quote, err := s.repo.GetPresupuesto(ctx, quoteID)
+	if err != nil {
+		return err
+	}
+	if quote.EmpresaID != empresaID {
+		return ErrTenantMismatch
+	}
+	if quote.Estado != StatusDraft {
+		return fmt.Errorf("%w: can only approve Draft quotes, currently %s", ErrInvalidStatus, quote.Estado)
+	}
+	quote.Estado = StatusApproved
+	if err := s.repo.SavePresupuesto(ctx, quote); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "presupuesto", quoteID, "aprobar", nil, "")
+	return nil
+}
+
+// CheckIdempotency checks if an idempotency key already has a cached response.
+func (s *SalesService) CheckIdempotency(ctx context.Context, key string) (string, bool, error) {
+	return s.repo.GetIdempotencyResponse(ctx, key)
+}
+
+// SaveIdempotency saves a response for an idempotency key.
+func (s *SalesService) SaveIdempotency(ctx context.Context, key string, response string) error {
+	return s.repo.SaveIdempotencyResponse(ctx, key, response)
 }
 
 // List methods
@@ -251,7 +301,11 @@ func (s *SalesService) CancelPresupuesto(ctx context.Context, empresaID, quoteID
 	if q.Estado == StatusConverted {
 		return fmt.Errorf("%w: cannot cancel a converted quote", ErrInvalidStatus)
 	}
-	return s.repo.CancelPresupuesto(ctx, quoteID)
+	if err := s.repo.CancelPresupuesto(ctx, quoteID); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "presupuesto", quoteID, "anular", nil, "")
+	return nil
 }
 
 func (s *SalesService) CancelPedido(ctx context.Context, empresaID, orderID uuid.UUID) error {
@@ -268,7 +322,11 @@ func (s *SalesService) CancelPedido(ctx context.Context, empresaID, orderID uuid
 	if o.Estado == StatusConverted {
 		return fmt.Errorf("%w: cannot cancel a converted order", ErrInvalidStatus)
 	}
-	return s.repo.CancelPedido(ctx, orderID)
+	if err := s.repo.CancelPedido(ctx, orderID); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "pedido", orderID, "anular", nil, "")
+	return nil
 }
 
 func (s *SalesService) CancelAlbaran(ctx context.Context, empresaID, dnID uuid.UUID) error {
@@ -295,7 +353,11 @@ func (s *SalesService) CancelAlbaran(ctx context.Context, empresaID, dnID uuid.U
 			}
 		}
 	}
-	return s.repo.CancelAlbaran(ctx, dnID)
+	if err := s.repo.CancelAlbaran(ctx, dnID); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "albaran", dnID, "anular", nil, "")
+	return nil
 }
 
 func (s *SalesService) CancelFactura(ctx context.Context, empresaID, invoiceID uuid.UUID) error {
@@ -309,7 +371,11 @@ func (s *SalesService) CancelFactura(ctx context.Context, empresaID, invoiceID u
 	if inv.Estado == StatusCancelled {
 		return fmt.Errorf("%w: invoice is already cancelled", ErrInvalidStatus)
 	}
-	return s.repo.CancelFactura(ctx, invoiceID)
+	if err := s.repo.CancelFactura(ctx, invoiceID); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "factura", invoiceID, "anular", nil, "")
+	return nil
 }
 
 // CreatePresupuesto creates a new quote.
@@ -358,6 +424,7 @@ func (s *SalesService) CreatePresupuesto(ctx context.Context, empresaID, cliente
 	if err := s.repo.SavePresupuesto(ctx, q); err != nil {
 		return nil, err
 	}
+	s.recordEvento(ctx, empresaID, "presupuesto", qID, "crear", nil, "")
 	return q, nil
 }
 
@@ -416,11 +483,8 @@ func (s *SalesService) ConvertPresupuestoToPedido(ctx context.Context, empresaID
 		return nil, ErrTenantMismatch
 	}
 
-	if quote.Estado == StatusConverted {
-		return nil, ErrDocumentAlreadyConverted
-	}
-	if quote.Estado == StatusCancelled {
-		return nil, ErrDocumentAlreadyCancelled
+	if quote.Estado != StatusApproved {
+		return nil, fmt.Errorf("%w: quote must be Approved before conversion, currently %s", ErrInvalidStatus, quote.Estado)
 	}
 
 	isExpired := false
@@ -559,6 +623,8 @@ func (s *SalesService) ConvertPresupuestoToPedido(ctx context.Context, empresaID
 		return nil, err
 	}
 
+	s.recordEvento(ctx, empresaID, "presupuesto", quote.ID, "convertir_a_pedido", nil, fmt.Sprintf("pedido=%s", oID))
+
 	return order, nil
 }
 
@@ -686,6 +752,8 @@ func (s *SalesService) ConvertPedidoToAlbaran(ctx context.Context, empresaID uui
 		return nil, err
 	}
 
+	s.recordEvento(ctx, empresaID, "pedido", order.ID, "convertir_a_albaran", nil, fmt.Sprintf("albaran=%s", dnID))
+
 	return dn, nil
 }
 
@@ -717,7 +785,11 @@ func (s *SalesService) ProcessAlbaran(ctx context.Context, empresaID, dnID uuid.
 	}
 
 	dn.Estado = StatusProcessed
-	return s.repo.SaveAlbaran(ctx, dn)
+	if err := s.repo.SaveAlbaran(ctx, dn); err != nil {
+		return err
+	}
+	s.recordEvento(ctx, empresaID, "albaran", dnID, "procesar", nil, "")
+	return nil
 }
 
 // ConvertAlbaranToFactura transitions an Albaran to a Factura.
@@ -862,6 +934,8 @@ func (s *SalesService) ConvertAlbaranToFactura(ctx context.Context, empresaID uu
 		return nil, err
 	}
 
+	s.recordEvento(ctx, empresaID, "albaran", dn.ID, "convertir_a_factura", nil, fmt.Sprintf("factura=%s", invID))
+
 	return invoice, nil
 }
 
@@ -993,6 +1067,8 @@ func (s *SalesService) CreateFacturaRectificativa(ctx context.Context, empresaID
 			return nil, err
 		}
 	}
+
+	s.recordEvento(ctx, empresaID, "factura", invoiceID, "crear_rectificativa", nil, fmt.Sprintf("fr=%s", frID))
 
 	return fr, nil
 }

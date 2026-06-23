@@ -61,9 +61,14 @@ func (c *SalesController) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(path, "/api/v1/sales/quotes/") {
 		// /api/v1/sales/quotes/{id}/cancel
+		// /api/v1/sales/quotes/{id}/approve
 		parts := strings.Split(strings.TrimPrefix(path, "/api/v1/sales/quotes/"), "/")
 		if len(parts) >= 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
 			c.HandleCancelPresupuesto(w, r)
+			return
+		}
+		if len(parts) >= 2 && parts[1] == "approve" && r.Method == http.MethodPost {
+			c.HandleApprovePresupuesto(w, r)
 			return
 		}
 		if len(parts) == 1 && parts[0] != "" && parts[0] != "convert" {
@@ -351,6 +356,16 @@ func (c *SalesController) HandleConvertPresupuestoToPedido(w http.ResponseWriter
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Idempotency check
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		if resp, found, err := c.service.CheckIdempotency(r.Context(), key); err == nil && found {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(resp))
+			return
+		}
+	}
+
 	var req ConvertPresupuestoRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -401,6 +416,8 @@ func (c *SalesController) HandleConvertPresupuestoToPedido(w http.ResponseWriter
 			w.WriteHeader(http.StatusForbidden)
 		} else if errors.Is(err, domain.ErrDocumentAlreadyConverted) || errors.Is(err, domain.ErrDocumentAlreadyCancelled) {
 			w.WriteHeader(http.StatusConflict)
+		} else if errors.Is(err, domain.ErrInvalidStatus) {
+			w.WriteHeader(http.StatusConflict)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -408,7 +425,13 @@ func (c *SalesController) HandleConvertPresupuestoToPedido(w http.ResponseWriter
 		return
 	}
 
-	json.NewEncoder(w).Encode(order)
+	respBytes, _ := json.Marshal(order)
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		c.service.SaveIdempotency(r.Context(), key, string(respBytes))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respBytes)
 }
 
 func (c *SalesController) HandleCreatePedido(w http.ResponseWriter, r *http.Request) {
@@ -469,6 +492,16 @@ func (c *SalesController) HandleConvertPedidoToAlbaran(w http.ResponseWriter, r 
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Idempotency check
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		if resp, found, err := c.service.CheckIdempotency(r.Context(), key); err == nil && found {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(resp))
+			return
+		}
+	}
+
 	var req ConvertPedidoRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -523,7 +556,13 @@ func (c *SalesController) HandleConvertPedidoToAlbaran(w http.ResponseWriter, r 
 		return
 	}
 
-	json.NewEncoder(w).Encode(dn)
+	respBytes, _ := json.Marshal(dn)
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		c.service.SaveIdempotency(r.Context(), key, string(respBytes))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respBytes)
 }
 
 func (c *SalesController) HandleProcessAlbaran(w http.ResponseWriter, r *http.Request) {
@@ -572,6 +611,16 @@ func (c *SalesController) HandleConvertAlbaranToFactura(w http.ResponseWriter, r
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Idempotency check
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		if resp, found, err := c.service.CheckIdempotency(r.Context(), key); err == nil && found {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(resp))
+			return
+		}
+	}
+
 	var req ConvertDNRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -638,7 +687,13 @@ func (c *SalesController) HandleConvertAlbaranToFactura(w http.ResponseWriter, r
 		return
 	}
 
-	json.NewEncoder(w).Encode(invoice)
+	respBytes, _ := json.Marshal(invoice)
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		c.service.SaveIdempotency(r.Context(), key, string(respBytes))
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respBytes)
 }
 
 // List response types
@@ -1257,6 +1312,44 @@ func (c *SalesController) HandleCancelPresupuesto(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(quote)
 }
 
+// HandleApprovePresupuesto handles POST /api/v1/sales/quotes/{id}/approve
+func (c *SalesController) HandleApprovePresupuesto(w http.ResponseWriter, r *http.Request) {
+	empID, err := getTenantID(r)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	id, err := parseSalesID("/api/v1/sales/quotes/", r.URL.Path)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid quote ID"})
+		return
+	}
+
+	err = c.service.ApprovePresupuesto(r.Context(), empID, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrPresupuestoNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+		} else if errors.Is(err, domain.ErrTenantMismatch) {
+			w.WriteHeader(http.StatusForbidden)
+		} else if errors.Is(err, domain.ErrInvalidStatus) {
+			w.WriteHeader(http.StatusConflict)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	quote, err := c.service.GetPresupuesto(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(quote)
+}
+
 // HandleCancelPedido handles POST /api/v1/sales/orders/{id}/cancel
 func (c *SalesController) HandleCancelPedido(w http.ResponseWriter, r *http.Request) {
 	empID, err := getTenantID(r)
@@ -1399,6 +1492,16 @@ func (c *SalesController) HandleCreateFacturaRectificativa(w http.ResponseWriter
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Idempotency check
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		if resp, found, err := c.service.CheckIdempotency(r.Context(), key); err == nil && found {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(resp))
+			return
+		}
+	}
+
 	var req CreateFacturaRectificativaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -1469,8 +1572,13 @@ func (c *SalesController) HandleCreateFacturaRectificativa(w http.ResponseWriter
 		return
 	}
 
+	respBytes, _ := json.Marshal(fr)
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		c.service.SaveIdempotency(r.Context(), key, string(respBytes))
+	}
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(fr)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(respBytes)
 }
 
 // HandleGetFacturasRectificativas handles GET /api/v1/sales/facturas-rectificativas

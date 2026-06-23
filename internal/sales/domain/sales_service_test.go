@@ -30,6 +30,9 @@ type mockSalesRepository struct {
 	listFacturasRectificativasFunc    func(ctx context.Context, empresaID uuid.UUID) ([]FacturaRectificativa, error)
 	updateInvRectTotalFunc            func(ctx context.Context, invoiceID uuid.UUID, rectifiedTotal float64) error
 	getRectifiedQuantitiesFunc        func(ctx context.Context, invoiceID uuid.UUID) (map[uuid.UUID]float64, error)
+	saveEventoFunc                    func(ctx context.Context, evento *RegistroEvento) error
+	getIdempotencyResponseFunc        func(ctx context.Context, clave string) (string, bool, error)
+	saveIdempotencyResponseFunc       func(ctx context.Context, clave string, respuesta string) error
 }
 
 func (m *mockSalesRepository) SavePresupuesto(ctx context.Context, q *Presupuesto) error {
@@ -139,6 +142,21 @@ func (m *mockSalesRepository) UpdateFacturaRectifiedTotal(ctx context.Context, i
 func (m *mockSalesRepository) GetRectifiedQuantitiesByInvoice(ctx context.Context, invoiceID uuid.UUID) (map[uuid.UUID]float64, error) {
 	if m.getRectifiedQuantitiesFunc != nil { return m.getRectifiedQuantitiesFunc(ctx, invoiceID) }
 	return nil, nil
+}
+
+func (m *mockSalesRepository) SaveEvento(ctx context.Context, evento *RegistroEvento) error {
+	if m.saveEventoFunc != nil { return m.saveEventoFunc(ctx, evento) }
+	return nil
+}
+
+func (m *mockSalesRepository) GetIdempotencyResponse(ctx context.Context, clave string) (string, bool, error) {
+	if m.getIdempotencyResponseFunc != nil { return m.getIdempotencyResponseFunc(ctx, clave) }
+	return "", false, nil
+}
+
+func (m *mockSalesRepository) SaveIdempotencyResponse(ctx context.Context, clave string, respuesta string) error {
+	if m.saveIdempotencyResponseFunc != nil { return m.saveIdempotencyResponseFunc(ctx, clave, respuesta) }
+	return nil
 }
 
 type mockSecurityService struct {

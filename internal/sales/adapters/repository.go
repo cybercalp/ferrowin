@@ -1292,3 +1292,62 @@ func (r *SQLSalesRepository) GetRectifiedQuantitiesByInvoice(ctx context.Context
 	}
 	return result, nil
 }
+
+func (r *SQLSalesRepository) SaveEvento(ctx context.Context, evento *domain.RegistroEvento) error {
+	var query string
+	if r.isSQLite {
+		query = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, usuario_id, detalles, created_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	} else {
+		query = `INSERT INTO registro_eventos (id, documento_tipo, documento_id, empresa_id, accion, usuario_id, detalles, created_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	}
+
+	var usuarioIDVal interface{}
+	if evento.UsuarioID != nil {
+		usuarioIDVal = evento.UsuarioID.String()
+	}
+
+	_, err := r.db.ExecContext(ctx, query,
+		evento.ID.String(),
+		evento.DocumentoTipo,
+		evento.DocumentoID.String(),
+		evento.EmpresaID.String(),
+		evento.Accion,
+		usuarioIDVal,
+		evento.Detalles,
+		evento.CreatedAt.UTC(),
+	)
+	return err
+}
+
+func (r *SQLSalesRepository) GetIdempotencyResponse(ctx context.Context, clave string) (string, bool, error) {
+	var query string
+	if r.isSQLite {
+		query = `SELECT respuesta FROM idempotency_keys WHERE clave = ?`
+	} else {
+		query = `SELECT respuesta FROM idempotency_keys WHERE clave = $1`
+	}
+
+	var respuesta string
+	err := r.db.QueryRowContext(ctx, query, clave).Scan(&respuesta)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return respuesta, true, nil
+}
+
+func (r *SQLSalesRepository) SaveIdempotencyResponse(ctx context.Context, clave string, respuesta string) error {
+	var query string
+	if r.isSQLite {
+		query = `INSERT OR IGNORE INTO idempotency_keys (clave, respuesta, created_at) VALUES (?, ?, ?)`
+	} else {
+		query = `INSERT INTO idempotency_keys (clave, respuesta, created_at) VALUES ($1, $2, $3) ON CONFLICT (clave) DO NOTHING`
+	}
+
+	_, err := r.db.ExecContext(ctx, query, clave, respuesta, time.Now().UTC())
+	return err
+}

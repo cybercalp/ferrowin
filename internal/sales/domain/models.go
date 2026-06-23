@@ -139,3 +139,15 @@ type FacturaLinea struct {
 	Cantidad  float64   `json:"cantidad"`
 	PrecioUnitario float64 `json:"precio_unitario"`
 }
+
+// RegistroEvento represents an audit trail entry for document actions.
+type RegistroEvento struct {
+	ID            uuid.UUID  `json:"id"`
+	DocumentoTipo string     `json:"documento_tipo"`
+	DocumentoID   uuid.UUID  `json:"documento_id"`
+	EmpresaID     uuid.UUID  `json:"empresa_id"`
+	Accion        string     `json:"accion"`
+	UsuarioID     *uuid.UUID `json:"usuario_id,omitempty"`
+	Detalles      string     `json:"detalles"`
+	CreatedAt     time.Time  `json:"created_at"`
+}

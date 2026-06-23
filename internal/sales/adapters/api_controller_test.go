@@ -175,6 +175,21 @@ func setupSalesTestDB(t *testing.T) (*sql.DB, func()) {
 			reference_document_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE registro_eventos (
+			id TEXT PRIMARY KEY,
+			documento_tipo TEXT NOT NULL,
+			documento_id TEXT NOT NULL,
+			empresa_id TEXT NOT NULL,
+			accion TEXT NOT NULL,
+			usuario_id TEXT,
+			detalles TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE idempotency_keys (
+			clave TEXT PRIMARY KEY,
+			respuesta TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 
 	for _, q := range queries {
@@ -265,7 +280,7 @@ func TestSalesController_Integration(t *testing.T) {
 		var q salesdomain.Presupuesto
 		json.Unmarshal(w.Body.Bytes(), &q)
 
-		// 2. Attempt to convert Quote of Company A using Company B's header
+		// 2. Attempt to convert Quote of Company A using Company B's header (should fail: not approved)
 		convBody := fmt.Sprintf(`{
 			"presupuesto_id": "%s",
 			"user_id": "%s",
@@ -280,18 +295,37 @@ func TestSalesController_Integration(t *testing.T) {
 			t.Errorf("expected 403 Forbidden on tenant mismatch, got %d", w.Code)
 		}
 
-		// 3. Convert Quote of Company A using Company A's header (Authorized)
+		// 3. Attempt to convert without approval (Company A) — should fail with 409
+		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/quotes/convert", bytes.NewBufferString(convBody))
+		req.Header.Set("X-Empresa-ID", companyA.ID.String())
+		w = httptest.NewRecorder()
+		controller.ServeHTTP(w, req)
+		if w.Code != http.StatusConflict {
+			t.Errorf("expected 409 Conflict on draft quote conversion, got %d. Body: %s", w.Code, w.Body.String())
+		}
+
+		// 4. Approve the quote
+		approvePath := fmt.Sprintf("/api/v1/sales/quotes/%s/approve", q.ID.String())
+		req = httptest.NewRequest(http.MethodPost, approvePath, nil)
+		req.Header.Set("X-Empresa-ID", companyA.ID.String())
+		w = httptest.NewRecorder()
+		controller.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("failed to approve quote: %d. Body: %s", w.Code, w.Body.String())
+		}
+
+		// 5. Convert approved Quote of Company A using Company A's header (Authorized)
 		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/quotes/convert", bytes.NewBufferString(convBody))
 		req.Header.Set("X-Empresa-ID", companyA.ID.String())
 		w = httptest.NewRecorder()
 		controller.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
-			t.Fatalf("failed to convert quote: %d", w.Code)
+			t.Fatalf("failed to convert quote: %d. Body: %s", w.Code, w.Body.String())
 		}
 		var o salesdomain.Pedido
 		json.Unmarshal(w.Body.Bytes(), &o)
 
-		// 4. Convert Order to Delivery Note
+		// 6. Convert Order to Delivery Note
 		convOrderBody := fmt.Sprintf(`{
 			"pedido_id": "%s",
 			"almacen_id": "%s"
@@ -306,7 +340,7 @@ func TestSalesController_Integration(t *testing.T) {
 		var dn salesdomain.Albaran
 		json.Unmarshal(w.Body.Bytes(), &dn)
 
-		// 5. Attempt to Process Delivery Note -> Should Fail with Conflict due to insufficient stock (available: 0)
+		// 7. Attempt to Process Delivery Note -> Should Fail with Conflict due to insufficient stock (available: 0)
 		processBody := fmt.Sprintf(`{"albaran_id": "%s"}`, dn.ID.String())
 		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/delivery-notes/process", bytes.NewBufferString(processBody))
 		req.Header.Set("X-Empresa-ID", companyA.ID.String())
@@ -316,7 +350,7 @@ func TestSalesController_Integration(t *testing.T) {
 			t.Errorf("expected 409 Conflict on insufficient stock, got %d", w.Code)
 		}
 
-		// 6. Record stock addition to Warehouse A (avail stock: 10)
+		// 8. Record stock addition to Warehouse A (avail stock: 10)
 		refDocType := "PURCHASE_RECEIPT"
 		refDocID := uuid.New()
 		_, err := invService.RecordReceipt(context.Background(), uuid.MustParse(productID), warehouseA.ID, 10.0, &refDocType, &refDocID)
@@ -330,7 +364,7 @@ func TestSalesController_Integration(t *testing.T) {
 			t.Fatalf("expected stock 10, got %f", stockA)
 		}
 
-		// 7. Process Delivery Note -> Should succeed now, withdrawing 5 units from Warehouse A
+		// 9. Process Delivery Note -> Should succeed now, withdrawing 5 units from Warehouse A
 		req = httptest.NewRequest(http.MethodPost, "/api/v1/sales/delivery-notes/process", bytes.NewBufferString(processBody))
 		req.Header.Set("X-Empresa-ID", companyA.ID.String())
 		w = httptest.NewRecorder()
@@ -339,7 +373,7 @@ func TestSalesController_Integration(t *testing.T) {
 			t.Fatalf("failed to process delivery note: %d. Body: %s", w.Code, w.Body.String())
 		}
 
-		// 8. Verify stock deduction
+		// 10. Verify stock deduction
 		stockA, _ = invService.GetAvailableStock(context.Background(), uuid.MustParse(productID), warehouseA.ID)
 		if stockA != 5.0 {
 			t.Errorf("expected stock in Warehouse A to decrease to 5.0, got %f", stockA)
@@ -350,7 +384,7 @@ func TestSalesController_Integration(t *testing.T) {
 			t.Errorf("expected stock in Warehouse B to remain 0.0, got %f", stockB)
 		}
 
-		// 9. Convert processed delivery note to invoice
+		// 11. Convert processed delivery note to invoice
 		convDNBody := fmt.Sprintf(`{
 			"albaran_id": "%s",
 			"terminal_id": "%s",
